@@ -1,0 +1,15 @@
+# Core requirements
+aiohttp>=3.8.0
+asyncio>=3.4.3
+uuid>=1.30
+
+# Visualization (optional)
+matplotlib>=3.5.0
+networkx>=2.6.3
+
+# Data persistence
+json5>=0.9.6
+
+# Hermes integration
+# Note: Hermes is imported dynamically at runtime from the parent directory
+# No direct dependency here to avoid version conflicts
