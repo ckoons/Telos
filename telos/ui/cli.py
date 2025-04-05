@@ -21,6 +21,12 @@ from telos.ui.cli_commands import (
     register_with_hermes
 )
 
+# Import interactive refinement commands
+from telos.ui.interactive_refine import (
+    refine_requirement_cmd, 
+    analyze_for_planning_cmd
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -64,6 +70,13 @@ class TelosCLI:
             },
             "viz": {
                 "requirements": self.visualize_requirements,
+            },
+            "refine": {
+                "requirement": self.refine_requirement,
+                "analyze": self.analyze_for_planning,
+            },
+            "prometheus": {
+                "plan": self.create_plan,
             },
             "hermes": {
                 "register": self.register_with_hermes,
@@ -154,6 +167,17 @@ class TelosCLI:
     def visualize_requirements(self, **kwargs) -> None:
         visualize_requirements(self.requirements_manager, **kwargs)
     
+    def refine_requirement(self, **kwargs) -> None:
+        refine_requirement_cmd(self.requirements_manager, **kwargs)
+    
+    def analyze_for_planning(self, **kwargs) -> None:
+        analyze_for_planning_cmd(self.requirements_manager, **kwargs)
+    
+    def create_plan(self, **kwargs) -> None:
+        # Use the Prometheus connector
+        from telos.prometheus_connector import create_plan_cmd
+        asyncio.run(create_plan_cmd(self.requirements_manager, **kwargs))
+        
     async def register_with_hermes(self, **kwargs) -> None:
         await register_with_hermes(self.requirements_manager, **kwargs)
 

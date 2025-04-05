@@ -98,7 +98,8 @@ def add_requirement(
     requirement_type: str = "functional",
     priority: str = "medium",
     tags: Optional[str] = None,
-    parent_id: Optional[str] = None
+    parent_id: Optional[str] = None,
+    interactive: bool = False
 ) -> None:
     """Add a requirement to a project.
     
@@ -111,6 +112,7 @@ def add_requirement(
         priority: Priority level
         tags: Comma-separated tags
         parent_id: Parent requirement ID
+        interactive: Whether to start interactive refinement after adding
     """
     # Parse tags
     tag_list = tags.split(",") if tags else []
@@ -128,6 +130,11 @@ def add_requirement(
     
     if req_id:
         print(f"Added requirement {req_id} to project {project_id}")
+        
+        # Start interactive refinement if requested
+        if interactive:
+            from telos.ui.interactive_refine import refine_requirement_cmd
+            refine_requirement_cmd(requirements_manager, project_id, req_id)
     else:
         print(f"Project {project_id} not found")
 

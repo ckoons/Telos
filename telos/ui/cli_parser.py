@@ -52,6 +52,8 @@ def create_parser() -> argparse.ArgumentParser:
                                       help="Priority (low, medium, high, critical)")
     requirement_add_parser.add_argument("--tags", help="Tags (comma-separated)")
     requirement_add_parser.add_argument("--parent", dest="parent_id", help="Parent requirement ID")
+    requirement_add_parser.add_argument("--interactive", "-i", action="store_true", 
+                                     help="Start interactive refinement after adding")
     
     requirement_list_parser = requirement_subparsers.add_parser("list", help="List requirements")
     requirement_list_parser.add_argument("project_id", help="Project ID")
@@ -87,6 +89,24 @@ def create_parser() -> argparse.ArgumentParser:
     viz_requirements_parser.add_argument("--format", default="hierarchy", 
                                        help="Format (hierarchy, graph)")
     viz_requirements_parser.add_argument("--output", help="Output file")
+    
+    # Refine commands
+    refine_parser = subparsers.add_parser("refine", help="Requirement refinement commands")
+    refine_subparsers = refine_parser.add_subparsers(dest="subcommand", help="Refinement subcommand")
+    
+    refine_requirement_parser = refine_subparsers.add_parser("requirement", help="Refine a requirement")
+    refine_requirement_parser.add_argument("project_id", help="Project ID")
+    refine_requirement_parser.add_argument("--requirement-id", help="Requirement ID (if omitted, create new)")
+    
+    refine_analyze_parser = refine_subparsers.add_parser("analyze", help="Analyze requirements for planning")
+    refine_analyze_parser.add_argument("project_id", help="Project ID")
+    
+    # Prometheus integration commands
+    prometheus_parser = subparsers.add_parser("prometheus", help="Prometheus integration commands")
+    prometheus_subparsers = prometheus_parser.add_subparsers(dest="subcommand", help="Prometheus subcommand")
+    
+    prometheus_plan_parser = prometheus_subparsers.add_parser("plan", help="Create a plan from requirements")
+    prometheus_plan_parser.add_argument("project_id", help="Project ID")
     
     # Hermes commands
     hermes_parser = subparsers.add_parser("hermes", help="Hermes commands")
