@@ -1,15 +1,24 @@
+# FastAPI and server components
+fastapi>=0.100.0
+uvicorn>=0.22.0
+pydantic>=2.0.0
+sse-starlette>=1.6.0
+websockets>=11.0.0
+python-multipart>=0.0.5
+
 # Core requirements
 aiohttp>=3.8.0
 asyncio>=3.4.3
+requests>=2.31.0
 uuid>=1.30
 
-# Visualization (optional)
+# Visualization capabilities
 matplotlib>=3.5.0
 networkx>=2.6.3
 
 # Data persistence
 json5>=0.9.6
 
-# Hermes integration
-# Note: Hermes is imported dynamically at runtime from the parent directory
-# No direct dependency here to avoid version conflicts
+# Service integration
+# Note: Hermes, Ergon, and Prometheus may be imported dynamically at runtime 
+# from the parent directory. No direct dependency here to avoid version conflicts.

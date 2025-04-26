@@ -9,19 +9,20 @@ Usage:
     python register_with_hermes.py [options]
 
 Environment Variables:
-    HERMES_URL: URL of the Hermes API (default: http://localhost:8000/api)
+    HERMES_PORT: Port of the Hermes API (default: 8001)
+    TELOS_PORT: Port of the Telos API (default: 8008)
     STARTUP_INSTRUCTIONS_FILE: Path to JSON file with startup instructions
-    TELOS_API_ENDPOINT: API endpoint for Telos (optional)
 
 Options:
-    --hermes-url: URL of the Hermes API (overrides HERMES_URL env var)
+    --hermes-url: URL of the Hermes API (overrides HERMES_PORT env var)
     --instructions-file: Path to startup instructions JSON file
-    --endpoint: API endpoint for Telos
+    --endpoint: API endpoint for Telos (overrides TELOS_PORT env var)
     --help: Show this help message
 """
 
 import os
 import sys
+import json
 import asyncio
 import signal
 import argparse
@@ -94,7 +95,7 @@ def parse_arguments():
     parser.add_argument(
         "--hermes-url",
         help="URL of the Hermes API",
-        default=os.environ.get("HERMES_URL", "http://localhost:8000/api")
+        default=None
     )
     parser.add_argument(
         "--instructions-file",
@@ -104,7 +105,7 @@ def parse_arguments():
     parser.add_argument(
         "--endpoint",
         help="API endpoint for Telos",
-        default=os.environ.get("TELOS_API_ENDPOINT", "http://localhost:5800")
+        default=None
     )
     
     return parser.parse_args()
@@ -125,10 +126,20 @@ async def register_telos_with_hermes(
     Returns:
         True if registration was successful
     """
+    # If hermes_url is not provided, construct it from environment variables
+    if not hermes_url:
+        hermes_port = os.environ.get("HERMES_PORT", "8001")
+        hermes_url = f"http://localhost:{hermes_port}/api"
+    
+    # If endpoint is not provided, construct it from environment variables
+    if not endpoint:
+        telos_port = os.environ.get("TELOS_PORT", "8008")
+        endpoint = f"http://localhost:{telos_port}/api"
+    
     # Check for startup instructions file
     if instructions_file and os.path.isfile(instructions_file):
         logger.info(f"Loading startup instructions from {instructions_file}")
-        instructions = load_startup_instructions(instructions_file)
+        instructions = load_startup_instructions(instructions_file) if REGISTRATION_UTILS_AVAILABLE else {}
     else:
         instructions = {}
     
@@ -222,25 +233,24 @@ async def register_telos_with_hermes(
         "description": "Requirements management and refinement for Tekton",
         "ui_available": True,
         "cli_available": True,
-        "prometheus_integration": True
+        "prometheus_integration": True,
+        "single_port_architecture": True,
+        "port": os.environ.get("TELOS_PORT", "8008")
     }
     if instructions.get("metadata"):
         metadata.update(instructions["metadata"])
-    
-    # If endpoint is not provided, use a default or from instructions
-    if not endpoint:
-        endpoint = instructions.get("endpoint", "http://localhost:5800")
     
     try:
         # Use standardized registration utility if available
         if REGISTRATION_UTILS_AVAILABLE:
             # Register Requirements Manager
+            logger.info(f"Registering Telos Requirements Manager with Hermes at {hermes_url}")
             req_client = await register_component(
                 component_id=component_id,
                 component_name=component_name,
                 component_type=component_type,
                 component_version=component_version,
-                capabilities=capabilities,
+                capabilities=[cap["name"] for cap in capabilities],
                 hermes_url=hermes_url,
                 dependencies=dependencies,
                 endpoint=endpoint,
@@ -248,21 +258,23 @@ async def register_telos_with_hermes(
             )
             
             # Register UI component
-            ui_endpoint = f"{endpoint}/ui"
             ui_metadata = {
                 "description": "Telos user interface for requirements management",
-                "parent_component": component_id
+                "parent_component": component_id,
+                "single_port_architecture": True,
+                "port": os.environ.get("TELOS_PORT", "8008")
             }
             
+            logger.info(f"Registering Telos UI with Hermes at {hermes_url}")
             ui_client = await register_component(
                 component_id="telos.ui",
                 component_name="Telos UI",
                 component_type="user_interface",
                 component_version=component_version,
-                capabilities=ui_capabilities,
+                capabilities=[cap["name"] for cap in ui_capabilities],
                 hermes_url=hermes_url,
                 dependencies=[component_id],
-                endpoint=ui_endpoint,
+                endpoint=f"{endpoint}/ui",
                 additional_metadata=ui_metadata
             )
             
@@ -318,7 +330,9 @@ async def register_telos_with_hermes(
                 metadata={
                     "component_type": "user_interface",
                     "description": "User interaction and visualization",
-                    "parent_component": component_id
+                    "parent_component": component_id,
+                    "single_port_architecture": True,
+                    "port": os.environ.get("TELOS_PORT", "8008")
                 },
                 version=component_version,
                 endpoint=f"{endpoint}/ui"
@@ -327,6 +341,18 @@ async def register_telos_with_hermes(
             # Display results
             if requirements_success and ui_success:
                 logger.info("Successfully registered all Telos services with Hermes")
+                logger.info("Press Ctrl+C to exit")
+                
+                # Keep script running until interrupted
+                try:
+                    # Wait for interrupt
+                    while True:
+                        await asyncio.sleep(1)
+                except asyncio.CancelledError:
+                    pass
+                except KeyboardInterrupt:
+                    pass
+                
                 return True
             elif requirements_success:
                 logger.warning("Successfully registered requirements service, but failed to register UI service")
@@ -371,10 +397,22 @@ async def main():
     
     logger.info("Registering Telos with Hermes service registry...")
     
+    # If hermes-url is not specified, construct it from HERMES_PORT
+    hermes_url = args.hermes_url
+    if not hermes_url:
+        hermes_port = os.environ.get("HERMES_PORT", "8001")
+        hermes_url = f"http://localhost:{hermes_port}/api"
+    
+    # If endpoint is not specified, construct it from TELOS_PORT
+    endpoint = args.endpoint
+    if not endpoint:
+        telos_port = os.environ.get("TELOS_PORT", "8008")
+        endpoint = f"http://localhost:{telos_port}/api"
+    
     success = await register_telos_with_hermes(
-        hermes_url=args.hermes_url,
+        hermes_url=hermes_url,
         instructions_file=args.instructions_file,
-        endpoint=args.endpoint
+        endpoint=endpoint
     )
     
     if success:
