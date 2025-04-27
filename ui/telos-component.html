@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Telos Requirements Manager</title>
     <link rel="stylesheet" href="../styles/telos.css">
+    <link rel="stylesheet" href="../styles/shared/chat-interface.css">
 </head>
 <body>
     <!-- Telos Requirements Manager Component -->
@@ -21,6 +22,11 @@
                         <input type="text" id="search-input" class="telos__search-input" placeholder="Search requirements...">
                         <button class="telos__search-btn" id="search-btn"><span class="icon-search"></span></button>
                     </div>
+                </div>
+                <!-- Main navigation tabs -->
+                <div class="telos__nav-tabs">
+                    <button class="telos__tab active" data-tab="requirements">Requirements</button>
+                    <button class="telos__tab" data-tab="chat">Chat</button>
                 </div>
             </div>
 
@@ -207,6 +213,11 @@
                                 <!-- Validation tab content -->
                             </div>
                         </div>
+                    </div>
+                    
+                    <!-- Chat view (shown when the chat tab is selected) -->
+                    <div class="telos__chat-view hidden" id="chat-view">
+                        <telos-chat></telos-chat>
                     </div>
                 </div>
             </div>

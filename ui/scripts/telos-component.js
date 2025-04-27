@@ -31,6 +31,7 @@ class TelosComponent extends HTMLElement {
         search: ''
       },
       view: 'list',
+      activeTab: 'requirements', // Added active tab tracking
       traces: [],
       loading: {
         projects: false,
@@ -115,6 +116,17 @@ class TelosComponent extends HTMLElement {
    * Add event listeners to DOM elements
    */
   addEventListeners() {
+    // Main navigation tabs
+    const navTabs = this.shadowRoot.querySelectorAll('.telos__nav-tabs .telos__tab');
+    if (navTabs) {
+      navTabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+          const tabName = tab.dataset.tab;
+          this.handleMainTabChange(tabName);
+        });
+      });
+    }
+    
     // Project actions
     const newProjectBtn = this.shadowRoot.getElementById('new-project-btn');
     if (newProjectBtn) {
@@ -1709,12 +1721,71 @@ class TelosComponent extends HTMLElement {
   }
   
   /**
+   * Handle main tab change (between requirements and chat)
+   */
+  handleMainTabChange(tabName) {
+    // Update state
+    this.state.activeTab = tabName;
+    
+    // Update tab buttons
+    const tabs = this.shadowRoot.querySelectorAll('.telos__nav-tabs .telos__tab');
+    tabs.forEach(tab => {
+      if (tab.dataset.tab === tabName) {
+        tab.classList.add('active');
+      } else {
+        tab.classList.remove('active');
+      }
+    });
+    
+    // Show/hide content areas based on the selected tab
+    const projectView = this.shadowRoot.getElementById('project-view');
+    const requirementView = this.shadowRoot.getElementById('requirement-view');
+    const chatView = this.shadowRoot.getElementById('chat-view');
+    
+    if (tabName === 'chat') {
+      // Show chat view, hide requirement views
+      if (chatView) chatView.classList.remove('hidden');
+      if (projectView) projectView.classList.add('hidden');
+      if (requirementView) requirementView.classList.add('hidden');
+    } else {
+      // Show appropriate requirement view based on state
+      if (chatView) chatView.classList.add('hidden');
+      
+      if (this.state.selectedRequirement) {
+        if (projectView) projectView.classList.add('hidden');
+        if (requirementView) requirementView.classList.remove('hidden');
+      } else {
+        if (projectView) projectView.classList.remove('hidden');
+        if (requirementView) requirementView.classList.add('hidden');
+      }
+    }
+  }
+  
+  /**
    * Show project view
    */
   showProjectView() {
-    // Show project view and hide requirement view
-    this.shadowRoot.getElementById('project-view').classList.remove('hidden');
-    this.shadowRoot.getElementById('requirement-view').classList.add('hidden');
+    // First ensure we're on the requirements tab
+    this.state.activeTab = 'requirements';
+    
+    // Update tabs
+    const tabs = this.shadowRoot.querySelectorAll('.telos__nav-tabs .telos__tab');
+    tabs.forEach(tab => {
+      if (tab.dataset.tab === 'requirements') {
+        tab.classList.add('active');
+      } else {
+        tab.classList.remove('active');
+      }
+    });
+    
+    // Show project view and hide requirement view and chat view
+    const projectView = this.shadowRoot.getElementById('project-view');
+    const requirementView = this.shadowRoot.getElementById('requirement-view');
+    const chatView = this.shadowRoot.getElementById('chat-view');
+    
+    if (projectView) projectView.classList.remove('hidden');
+    if (requirementView) requirementView.classList.add('hidden');
+    if (chatView) chatView.classList.add('hidden');
   }
   
   /**
