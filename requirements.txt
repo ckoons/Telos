@@ -22,3 +22,7 @@ json5>=0.9.6
 # Service integration
 # Note: Hermes, Ergon, and Prometheus may be imported dynamically at runtime 
 # from the parent directory. No direct dependency here to avoid version conflicts.
+
+# LLM integration
+tekton-llm-client>=1.0.0
+jinja2>=3.1.2

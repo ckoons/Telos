@@ -282,6 +282,143 @@ class TelosClient(ComponentClient):
             )
             
         return result["requirement"]
+            
+    async def llm_analyze_requirement(
+        self,
+        requirement_text: str,
+        context: Optional[str] = None,
+        model: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Analyze a requirement using LLM capabilities.
+        
+        Args:
+            requirement_text: The text of the requirement to analyze
+            context: Optional additional context about the project
+            model: Optional model to use for analysis
+            
+        Returns:
+            Dictionary with analysis results
+            
+        Raises:
+            CapabilityInvocationError: If the requirement analysis fails
+            ComponentUnavailableError: If the Telos component is unavailable
+        """
+        parameters = {"requirement_text": requirement_text}
+        
+        if context:
+            parameters["context"] = context
+            
+        if model:
+            parameters["model"] = model
+            
+        result = await self.invoke_capability("llm_analyze_requirement", parameters)
+        
+        if not isinstance(result, dict):
+            raise CapabilityInvocationError(
+                "Unexpected response format from Telos",
+                result
+            )
+            
+        return result
+    
+    async def llm_generate_traces(
+        self,
+        requirements: str,
+        artifacts: str,
+        context: Optional[str] = None,
+        model: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate traceability links between requirements and implementation artifacts.
+        
+        Args:
+            requirements: The requirements text or representation
+            artifacts: The implementation artifacts text or representation
+            context: Optional additional context
+            model: Optional model to use for trace generation
+            
+        Returns:
+            Dictionary with traceability results
+            
+        Raises:
+            CapabilityInvocationError: If the trace generation fails
+            ComponentUnavailableError: If the Telos component is unavailable
+        """
+        parameters = {
+            "requirements": requirements,
+            "artifacts": artifacts
+        }
+        
+        if context:
+            parameters["context"] = context
+            
+        if model:
+            parameters["model"] = model
+            
+        result = await self.invoke_capability("llm_generate_traces", parameters)
+        
+        if not isinstance(result, dict):
+            raise CapabilityInvocationError(
+                "Unexpected response format from Telos",
+                result
+            )
+            
+        return result
+    
+    async def llm_initialize_project(
+        self,
+        project_name: str,
+        project_description: Optional[str] = None,
+        project_domain: Optional[str] = None,
+        stakeholders: Optional[str] = None,
+        constraints: Optional[str] = None,
+        model: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Initialize a new requirements project with LLM-generated recommendations.
+        
+        Args:
+            project_name: Name of the project
+            project_description: Optional description of the project
+            project_domain: Optional domain/industry of the project
+            stakeholders: Optional key stakeholders information
+            constraints: Optional project constraints
+            model: Optional model to use for initialization
+            
+        Returns:
+            Dictionary with project initialization recommendations
+            
+        Raises:
+            CapabilityInvocationError: If the project initialization fails
+            ComponentUnavailableError: If the Telos component is unavailable
+        """
+        parameters = {"project_name": project_name}
+        
+        if project_description:
+            parameters["project_description"] = project_description
+            
+        if project_domain:
+            parameters["project_domain"] = project_domain
+            
+        if stakeholders:
+            parameters["stakeholders"] = stakeholders
+            
+        if constraints:
+            parameters["constraints"] = constraints
+            
+        if model:
+            parameters["model"] = model
+            
+        result = await self.invoke_capability("llm_initialize_project", parameters)
+        
+        if not isinstance(result, dict):
+            raise CapabilityInvocationError(
+                "Unexpected response format from Telos",
+                result
+            )
+            
+        return result
 
 
 class TelosUIClient(ComponentClient):
