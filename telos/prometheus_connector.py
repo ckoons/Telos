@@ -33,8 +33,13 @@ class TelosPrometheusConnector:
         # Try to import Prometheus planning engine (optional dependency)
         try:
             from prometheus.core.planning_engine import PlanningEngine
-            self.planning_engine = PlanningEngine()
+            from telos.utils.port_config import get_prometheus_url
+            
+            # Initialize with standardized port config
+            prometheus_url = get_prometheus_url()
+            self.planning_engine = PlanningEngine(prometheus_url=prometheus_url)
             self.prometheus_available = True
+            logger.info(f"Initialized Prometheus connection with URL: {prometheus_url}")
         except ImportError:
             logger.warning("Prometheus planning engine not available. Planning features will be limited.")
             self.planning_engine = None
