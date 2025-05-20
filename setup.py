@@ -15,6 +15,7 @@ requires = [
     'networkx',    # Optional for visualizations
     'requests',
     'python-multipart',
+    'tekton-core>=0.1.0',  # FastMCP integration
 ]
 
 setup(

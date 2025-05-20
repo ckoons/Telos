@@ -146,6 +146,69 @@ async def startup_event():
     except Exception as e:
         logger.warning(f"Failed to initialize Prometheus connector: {e}")
     
+    # Initialize FastMCP integration
+    try:
+        from tekton.mcp.fastmcp.registry import FastMCPRegistry
+        from tekton.mcp.fastmcp.utils.endpoints import create_mcp_router, add_standard_mcp_endpoints
+        from ..core.mcp.tools import (
+            requirements_management_tools,
+            requirement_tracing_tools,
+            requirement_validation_tools,
+            prometheus_integration_tools
+        )
+        
+        # Create FastMCP registry
+        fastmcp_registry = FastMCPRegistry()
+        
+        # Register all tools
+        all_tools = (requirements_management_tools + requirement_tracing_tools + 
+                    requirement_validation_tools + prometheus_integration_tools)
+        
+        # Create dependency injection functions
+        def get_requirements_manager_dep():
+            async def _get_requirements_manager():
+                return requirements_manager
+            return _get_requirements_manager
+        
+        def get_prometheus_connector_dep():
+            async def _get_prometheus_connector():
+                return prometheus_connector
+            return _get_prometheus_connector
+        
+        # Register dependencies
+        fastmcp_registry.register_dependency('requirements_manager', get_requirements_manager_dep())
+        fastmcp_registry.register_dependency('prometheus_connector', get_prometheus_connector_dep())
+        
+        # Register tools
+        fastmcp_registry.register_tools(all_tools)
+        
+        # Create MCP router
+        mcp_router = create_mcp_router(fastmcp_registry)
+        add_standard_mcp_endpoints(mcp_router, fastmcp_registry)
+        
+        # Add custom health endpoint
+        @mcp_router.get("/health")
+        async def fastmcp_health():
+            """Health check endpoint for FastMCP."""
+            return {
+                "status": "healthy",
+                "service": "telos-fastmcp-integrated",
+                "version": "1.0.0",
+                "tools_registered": len(fastmcp_registry.tools),
+                "capabilities_registered": len(fastmcp_registry.capabilities),
+                "requirements_manager_available": requirements_manager is not None,
+                "prometheus_connector_available": prometheus_connector is not None
+            }
+        
+        # Include MCP router in main app
+        app.include_router(mcp_router, prefix="/api/mcp/v2")
+        
+        logger.info(f"FastMCP integration initialized with {len(all_tools)} tools")
+        
+    except Exception as e:
+        logger.warning(f"Failed to initialize FastMCP integration: {e}")
+        logger.warning("Telos will continue without FastMCP capabilities")
+    
     logger.info("Telos API initialized with requirements manager and Prometheus connector")
 
 @app.get("/")
