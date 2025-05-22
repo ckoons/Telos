@@ -6,7 +6,7 @@ This module provides Pydantic models for requirement tracing.
 
 from typing import Dict, List, Optional, Any
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 class TraceBase(BaseModel):
     """Base model for trace data."""
@@ -32,9 +32,7 @@ class TraceModel(TraceBase):
     created_at: float
     updated_at: Optional[float] = None
     
-    class Config:
-        """Pydantic configuration."""
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 class TraceListItem(BaseModel):
     """Model for trace list item."""

@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Any, Union
 from datetime import datetime
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks, Query, Path, Depends, Body
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks, Query, Path, Depends, Body, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
@@ -148,8 +148,8 @@ async def startup_event():
     
     # Initialize FastMCP integration
     try:
-        from tekton.mcp.fastmcp.registry import FastMCPRegistry
-        from tekton.mcp.fastmcp.utils.endpoints import create_mcp_router, add_standard_mcp_endpoints
+        from tekton.mcp.fastmcp.server import FastMCPServer
+        from tekton.mcp.fastmcp.utils.endpoints import add_mcp_endpoints
         from ..core.mcp.tools import (
             requirements_management_tools,
             requirement_tracing_tools,
@@ -157,34 +157,19 @@ async def startup_event():
             prometheus_integration_tools
         )
         
-        # Create FastMCP registry
-        fastmcp_registry = FastMCPRegistry()
+        # Create FastMCP server
+        fastmcp_server = FastMCPServer(
+            name="telos",
+            version="0.1.0", 
+            description="Telos Requirements Management MCP Server"
+        )
         
-        # Register all tools
-        all_tools = (requirements_management_tools + requirement_tracing_tools + 
-                    requirement_validation_tools + prometheus_integration_tools)
-        
-        # Create dependency injection functions
-        def get_requirements_manager_dep():
-            async def _get_requirements_manager():
-                return requirements_manager
-            return _get_requirements_manager
-        
-        def get_prometheus_connector_dep():
-            async def _get_prometheus_connector():
-                return prometheus_connector
-            return _get_prometheus_connector
-        
-        # Register dependencies
-        fastmcp_registry.register_dependency('requirements_manager', get_requirements_manager_dep())
-        fastmcp_registry.register_dependency('prometheus_connector', get_prometheus_connector_dep())
-        
-        # Register tools
-        fastmcp_registry.register_tools(all_tools)
+        # Tools are already registered by the @mcp_tool decorator
+        # No need to manually register them
         
         # Create MCP router
-        mcp_router = create_mcp_router(fastmcp_registry)
-        add_standard_mcp_endpoints(mcp_router, fastmcp_registry)
+        mcp_router = APIRouter(prefix="/api/mcp/v2")
+        add_mcp_endpoints(mcp_router, fastmcp_server)
         
         # Add custom health endpoint
         @mcp_router.get("/health")
@@ -194,8 +179,8 @@ async def startup_event():
                 "status": "healthy",
                 "service": "telos-fastmcp-integrated",
                 "version": "1.0.0",
-                "tools_registered": len(fastmcp_registry.tools),
-                "capabilities_registered": len(fastmcp_registry.capabilities),
+                "tools_registered": len(fastmcp_server._tools),
+                "capabilities_registered": len(fastmcp_server._capabilities),
                 "requirements_manager_available": requirements_manager is not None,
                 "prometheus_connector_available": prometheus_connector is not None
             }

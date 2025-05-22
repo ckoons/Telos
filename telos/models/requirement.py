@@ -6,7 +6,7 @@ This module provides Pydantic models for requirement data.
 
 from typing import Dict, List, Optional, Any
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 class HistoryEntry(BaseModel):
     """Model for requirement history entry."""
@@ -50,9 +50,7 @@ class RequirementModel(RequirementBase):
     created_by: Optional[str] = None
     history: List[HistoryEntry] = Field(default_factory=list)
     
-    class Config:
-        """Pydantic configuration."""
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 class RequirementListItem(BaseModel):
     """Model for requirement list item."""

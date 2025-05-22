@@ -6,7 +6,7 @@ This module provides Pydantic models for project data.
 
 from typing import Dict, List, Optional, Any
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 class ProjectBase(BaseModel):
     """Base model for project data."""
@@ -44,9 +44,7 @@ class ProjectModel(ProjectBase):
     requirements: Dict[str, RequirementSummary] = Field(default_factory=dict)
     hierarchy: Optional[ProjectHierarchy] = None
     
-    class Config:
-        """Pydantic configuration."""
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 class ProjectListItem(BaseModel):
     """Model for project list item."""
