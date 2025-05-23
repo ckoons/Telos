@@ -54,7 +54,7 @@ sleep 2
 
 # Start the Telos service
 echo -e "${YELLOW}Starting Telos API server...${RESET}"
-python -m telos.api.app --port $TELOS_PORT > "$HOME/.tekton/logs/telos.log" 2>&1 &
+python -m telos.api.app > "$HOME/.tekton/logs/telos.log" 2>&1 &
 TELOS_PID=$!
 
 # Trap signals for graceful shutdown
