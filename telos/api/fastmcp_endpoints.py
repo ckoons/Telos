@@ -375,7 +375,7 @@ async def health():
 
 if __name__ == "__main__":
     import uvicorn
-    from telos.utils.port_config import get_telos_port
+    from tekton.utils.port_config import get_telos_port
     
     port = get_telos_port() + 1  # Use a different port for FastMCP server
     logger.info(f"Starting Telos FastMCP server on port {port}")

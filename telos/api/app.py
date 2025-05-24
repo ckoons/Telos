@@ -1223,16 +1223,12 @@ async def start_server(host="0.0.0.0", port=None, log_level="info"):
         log_level: Logging level
     """
     # Use standardized port configuration
-    from telos.utils.port_config import get_telos_port, verify_component_port
+    from tekton.utils.port_config import get_telos_port
     
     if port is None:
         port = get_telos_port()
         
-    # Verify port availability
-    port_available, message = verify_component_port("telos")
-    if not port_available:
-        logger.warning(f"Port warning: {message}")
-        logger.warning(f"Attempting to start server on port {port} anyway...")
+    # Port verification handled by tekton.utils.port_config
         
     config = uvicorn.Config(
         "telos.api.app:app",
@@ -1254,16 +1250,12 @@ def run_server(host="0.0.0.0", port=None, log_level="info"):
         log_level: Logging level
     """
     # Use standardized port configuration
-    from telos.utils.port_config import get_telos_port, verify_component_port
+    from tekton.utils.port_config import get_telos_port
     
     if port is None:
         port = get_telos_port()
         
-    # Verify port availability
-    port_available, message = verify_component_port("telos")
-    if not port_available:
-        logger.warning(f"Port warning: {message}")
-        logger.warning(f"Attempting to start server on port {port} anyway...")
+    # Port verification handled by tekton.utils.port_config
         
     uvicorn.run(
         app,
@@ -1273,7 +1265,7 @@ def run_server(host="0.0.0.0", port=None, log_level="info"):
     )
 
 if __name__ == "__main__":
-    from telos.utils.port_config import get_telos_port
+    from tekton.utils.port_config import get_telos_port
     
     port = get_telos_port()
     log_level = os.environ.get("TELOS_LOG_LEVEL", "info")

@@ -33,7 +33,7 @@ class TelosPrometheusConnector:
         # Try to import Prometheus planning engine (optional dependency)
         try:
             from prometheus.core.planning_engine import PlanningEngine
-            from telos.utils.port_config import get_prometheus_url
+            from tekton.utils.port_config import get_prometheus_url
             
             # Initialize with standardized port config
             prometheus_url = get_prometheus_url()
