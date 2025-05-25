@@ -20,6 +20,10 @@ from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 from pydantic import BaseModel, Field
 
+# Import Hermes registration utility
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "shared", "utils"))
+from hermes_registration import HermesRegistration, heartbeat_loop
+
 from ..core.requirements_manager import RequirementsManager
 from ..core.project import Project
 from ..core.requirement import Requirement
@@ -129,6 +133,32 @@ async def startup_event():
     """Initialize components on startup"""
     global requirements_manager, prometheus_connector
     
+    # Register with Hermes
+    from tekton.utils.port_config import get_telos_port
+    port = get_telos_port()
+    
+    hermes_registration = HermesRegistration()
+    await hermes_registration.register_component(
+        component_name="telos",
+        port=port,
+        version="0.1.0",
+        capabilities=[
+            "requirements_tracking",
+            "requirement_validation",
+            "requirement_tracing",
+            "prometheus_integration"
+        ],
+        metadata={
+            "description": "Requirements tracking and validation",
+            "category": "planning"
+        }
+    )
+    app.state.hermes_registration = hermes_registration
+    
+    # Start heartbeat task
+    if hermes_registration.is_registered:
+        asyncio.create_task(heartbeat_loop(hermes_registration, "telos"))
+    
     # Load environment variables for configuration
     storage_dir = os.environ.get("TELOS_STORAGE_DIR", os.path.join(os.getcwd(), "data", "requirements"))
     
@@ -196,6 +226,22 @@ async def startup_event():
     
     logger.info("Telos API initialized with requirements manager and Prometheus connector")
 
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown"""
+    # Deregister from Hermes
+    if hasattr(app.state, "hermes_registration") and app.state.hermes_registration:
+        await app.state.hermes_registration.deregister("telos")
+    
+    # Clean up Prometheus connector
+    if prometheus_connector:
+        try:
+            await prometheus_connector.shutdown()
+        except Exception as e:
+            logger.warning(f"Error shutting down Prometheus connector: {e}")
+    
+    logger.info("Telos API shutdown complete")
+
 @app.get("/")
 async def root():
     """Root endpoint - provides basic information"""
@@ -213,13 +259,21 @@ async def root():
 
 @app.get("/health")
 async def health():
-    """Health check endpoint"""
+    """Health check endpoint following Tekton standards"""
+    from tekton.utils.port_config import get_telos_port
+    port = get_telos_port()
+    
     return {
         "status": "healthy",
+        "component": "telos",
         "version": "0.1.0",
-        "project_count": len(requirements_manager.projects) if requirements_manager else 0,
-        "storage_dir": requirements_manager.storage_dir if requirements_manager else None,
-        "prometheus_available": prometheus_connector.prometheus_available if prometheus_connector else False
+        "port": port,
+        "message": "Telos is running normally",
+        "details": {
+            "project_count": len(requirements_manager.projects) if requirements_manager else 0,
+            "storage_dir": requirements_manager.storage_dir if requirements_manager else None,
+            "prometheus_available": prometheus_connector.prometheus_available if prometheus_connector else False
+        }
     }
 
 # Project management endpoints
