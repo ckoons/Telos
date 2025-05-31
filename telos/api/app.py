@@ -240,6 +240,9 @@ async def shutdown_event():
         except Exception as e:
             logger.warning(f"Error shutting down Prometheus connector: {e}")
     
+    # Allow socket to fully release on macOS
+    await asyncio.sleep(0.5)
+    
     logger.info("Telos API shutdown complete")
 
 @app.get("/")
