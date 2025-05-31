@@ -1,31 +1,16 @@
-# FastAPI and server components
-fastapi>=0.100.0
-uvicorn>=0.22.0
-pydantic>=2.0.0
-sse-starlette>=1.6.0
-websockets>=11.0.3,<12.0.0
-python-multipart>=0.0.5
+# Telos requirements - Goal tracking and objective management
+# This component handles goal setting, tracking, and achievement monitoring
 
 # Core requirements
-aiohttp>=3.8.0
-asyncio>=3.4.3
-requests>=2.31.0
-uuid>=1.30
+-r ../shared/requirements/base.txt
+-r ../shared/requirements/web.txt
 
-# Visualization capabilities
+# Additional component-specific dependencies
+uuid>=1.30
+json5>=0.9.6
 matplotlib>=3.5.0
 networkx>=2.6.3
 
-# Data persistence
-json5>=0.9.6
-
-# Service integration
-# Note: Hermes, Ergon, and Prometheus may be imported dynamically at runtime 
-# from the parent directory. No direct dependency here to avoid version conflicts.
-
-# LLM integration
+# Tekton integration
 tekton-llm-client>=1.0.0
-jinja2>=3.1.2
-
-# FastMCP integration
 tekton-core>=0.1.0
