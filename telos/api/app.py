@@ -25,8 +25,12 @@ tekton_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'
 if tekton_root not in sys.path:
     sys.path.insert(0, tekton_root)
 
-# Import Hermes registration utility with correct path
+# Import shared utilities
 from shared.utils.hermes_registration import HermesRegistration, heartbeat_loop
+from shared.utils.logging_setup import setup_component_logging
+from shared.utils.shutdown import component_lifespan
+from shared.utils.startup import component_startup
+from shared.utils.env_config import get_component_config
 
 from ..core.requirements_manager import RequirementsManager
 from ..core.project import Project
@@ -34,23 +38,7 @@ from ..core.requirement import Requirement
 from ..prometheus_connector import TelosPrometheusConnector
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger("telos.api")
-
-# Initialize FastAPI app
-app = FastAPI(title="Telos Requirements Manager", version="1.0.0")
-
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # For development - restrict in production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+logger = setup_component_logging("telos")
 
 # Initialize core components (will be set in startup event)
 requirements_manager = None
@@ -132,8 +120,8 @@ class WebSocketResponse(BaseModel):
     timestamp: float
     payload: Dict[str, Any]
 
-@app.on_event("startup")
-async def startup_event():
+# Define startup and cleanup functions for lifespan
+async def startup_tasks():
     """Initialize components on startup"""
     global requirements_manager, prometheus_connector
     
@@ -222,7 +210,7 @@ async def startup_event():
         # Include MCP router in main app
         app.include_router(mcp_router, prefix="/api/mcp/v2")
         
-        logger.info(f"FastMCP integration initialized with {len(all_tools)} tools")
+        logger.info(f"FastMCP integration initialized successfully")
         
     except Exception as e:
         logger.warning(f"Failed to initialize FastMCP integration: {e}")
@@ -230,8 +218,7 @@ async def startup_event():
     
     logger.info("Telos API initialized with requirements manager and Prometheus connector")
 
-@app.on_event("shutdown")
-async def shutdown_event():
+async def cleanup_tasks():
     """Cleanup on shutdown"""
     # Deregister from Hermes
     if hasattr(app.state, "hermes_registration") and app.state.hermes_registration:
@@ -244,10 +231,28 @@ async def shutdown_event():
         except Exception as e:
             logger.warning(f"Error shutting down Prometheus connector: {e}")
     
-    # Allow socket to fully release on macOS
-    await asyncio.sleep(0.5)
-    
     logger.info("Telos API shutdown complete")
+
+# Initialize FastAPI app with lifespan (after defining startup_tasks and cleanup_tasks)
+app = FastAPI(
+    title="Telos Requirements Manager",
+    version="1.0.0",
+    lifespan=component_lifespan(
+        "telos",
+        startup_tasks,
+        [cleanup_tasks],
+        port=8008
+    )
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # For development - restrict in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/")
 async def root():
@@ -1273,63 +1278,22 @@ async def websocket_endpoint(websocket: WebSocket):
         except:
             pass
 
-# Server startup function
-async def start_server(host="0.0.0.0", port=None, log_level="info"):
-    """
-    Start the Telos API server.
-    
-    Args:
-        host: Host to bind to
-        port: Port to bind to (uses standardized port configuration)
-        log_level: Logging level
-    """
-    # Use standardized port configuration
-    from tekton.utils.port_config import get_telos_port
-    
-    if port is None:
-        port = get_telos_port()
-        
-    # Port verification handled by tekton.utils.port_config
-        
-    config = uvicorn.Config(
-        "telos.api.app:app",
-        host=host,
-        port=port,
-        log_level=log_level,
-        reload=False
-    )
-    server = uvicorn.Server(config)
-    await server.serve()
-
-def run_server(host="0.0.0.0", port=None, log_level="info"):
-    """
-    Run the Telos API server in a blocking manner.
-    
-    Args:
-        host: Host to bind to
-        port: Port to bind to (uses standardized port configuration)
-        log_level: Logging level
-    """
-    # Use standardized port configuration
-    from tekton.utils.port_config import get_telos_port
-    
-    if port is None:
-        port = get_telos_port()
-        
-    # Port verification handled by tekton.utils.port_config
-        
-    uvicorn.run(
-        app,
-        host=host,
-        port=port,
-        log_level=log_level
-    )
-
 if __name__ == "__main__":
-    from tekton.utils.port_config import get_telos_port
+    import uvicorn
+    from uvicorn.config import LOGGING_CONFIG
     
-    port = get_telos_port()
-    log_level = os.environ.get("TELOS_LOG_LEVEL", "info")
+    # Get configuration
+    config = get_component_config()
+    port = config.telos.port if hasattr(config, 'telos') else int(os.environ.get("TELOS_PORT", 8008))
     
-    logger.info(f"Starting Telos API server on port {port}")
-    run_server(port=port, log_level=log_level)
+    # Configure uvicorn with socket reuse
+    uvicorn.run(
+        "telos.api.app:app",
+        host="0.0.0.0",
+        port=port,
+        reload=True,
+        # Enable socket reuse to prevent port binding issues
+        server_header=False,
+        access_log=False,
+        use_colors=True
+    )
