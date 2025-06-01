@@ -20,9 +20,13 @@ from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 from pydantic import BaseModel, Field
 
-# Import Hermes registration utility
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "shared", "utils"))
-from hermes_registration import HermesRegistration, heartbeat_loop
+# Add Tekton root to path if not already present
+tekton_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+if tekton_root not in sys.path:
+    sys.path.insert(0, tekton_root)
+
+# Import Hermes registration utility with correct path
+from shared.utils.hermes_registration import HermesRegistration, heartbeat_loop
 
 from ..core.requirements_manager import RequirementsManager
 from ..core.project import Project
