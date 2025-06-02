@@ -36,6 +36,7 @@ from ..core.requirements_manager import RequirementsManager
 from ..core.project import Project
 from ..core.requirement import Requirement
 from ..prometheus_connector import TelosPrometheusConnector
+from .. import __version__
 
 # Configure logging
 logger = setup_component_logging("telos")
@@ -125,15 +126,14 @@ async def startup_tasks():
     """Initialize components on startup"""
     global requirements_manager, prometheus_connector
     
-    # Register with Hermes
-    from tekton.utils.port_config import get_telos_port
-    port = get_telos_port()
+    # Get port from environment
+    port = int(os.environ.get("TELOS_PORT"))
     
     hermes_registration = HermesRegistration()
     await hermes_registration.register_component(
         component_name="telos",
         port=port,
-        version="0.1.0",
+        version=__version__,
         capabilities=[
             "requirements_tracking",
             "requirement_validation",
@@ -182,7 +182,7 @@ async def startup_tasks():
         # Create FastMCP server
         fastmcp_server = FastMCPServer(
             name="telos",
-            version="0.1.0", 
+            version=__version__, 
             description="Telos Requirements Management MCP Server"
         )
         
@@ -236,12 +236,11 @@ async def cleanup_tasks():
 # Initialize FastAPI app with lifespan (after defining startup_tasks and cleanup_tasks)
 app = FastAPI(
     title="Telos Requirements Manager",
-    version="1.0.0",
+    version=__version__,
     lifespan=component_lifespan(
         "telos",
         startup_tasks,
-        [cleanup_tasks],
-        port=8008
+        [cleanup_tasks]
     )
 )
 
@@ -272,13 +271,13 @@ async def root():
 @app.get("/health")
 async def health():
     """Health check endpoint following Tekton standards"""
-    from tekton.utils.port_config import get_telos_port
-    port = get_telos_port()
+    # Get port from environment
+    port = int(os.environ.get("TELOS_PORT"))
     
     return {
         "status": "healthy",
         "component": "telos",
-        "version": "0.1.0",
+        "version": __version__,
         "port": port,
         "message": "Telos is running normally",
         "details": {
@@ -1282,9 +1281,8 @@ if __name__ == "__main__":
     import uvicorn
     from uvicorn.config import LOGGING_CONFIG
     
-    # Get configuration
-    config = get_component_config()
-    port = config.telos.port if hasattr(config, 'telos') else int(os.environ.get("TELOS_PORT", 8008))
+    # Get port from environment
+    port = int(os.environ.get("TELOS_PORT"))
     
     # Configure uvicorn with socket reuse
     uvicorn.run(
