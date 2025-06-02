@@ -253,6 +253,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Add shutdown endpoint
+try:
+    from shared.utils.shutdown_endpoint import add_shutdown_endpoint_to_app
+    add_shutdown_endpoint_to_app(app, "telos")
+except ImportError:
+    logger.warning("Shutdown endpoint module not available")
+
 @app.get("/")
 async def root():
     """Root endpoint - provides basic information"""

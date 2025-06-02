@@ -1,27 +1,80 @@
 #!/bin/bash
 # Telos Requirements System - Launch Script
 
-# Default port (can be overridden by environment variable)
-export TELOS_PORT=${TELOS_PORT:-8008}
+# ANSI color codes for terminal output
+BLUE="\033[94m"
+GREEN="\033[92m"
+YELLOW="\033[93m"
+RED="\033[91m"
+BOLD="\033[1m"
+RESET="\033[0m"
 
-# Ensure we're in the right directory
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-cd "$SCRIPT_DIR" || exit 1
+echo -e "${BLUE}${BOLD}Starting Telos Requirements Management System...${RESET}"
 
-# Add Tekton root to Python path
-TEKTON_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-export PYTHONPATH="$SCRIPT_DIR:$TEKTON_ROOT:$PYTHONPATH"
-
-# Check if port is already in use
-if nc -z localhost $TELOS_PORT 2>/dev/null; then
-    echo "Telos is already running on port $TELOS_PORT"
-    exit 0
+# Find Tekton root directory
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+if [[ "$SCRIPT_DIR" == *"/utils" ]]; then
+    # Script is running from a symlink in utils
+    TEKTON_ROOT=$(cd "$SCRIPT_DIR" && cd "$(readlink "${BASH_SOURCE[0]}" | xargs dirname | xargs dirname)" && pwd)
+else
+    # Script is running from Telos directory
+    TEKTON_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 fi
 
-echo "Starting Telos on port $TELOS_PORT..."
+# Ensure we're in the correct directory
+cd "$SCRIPT_DIR"
 
-# Start the Telos service using custom socket server for proper port reuse
-python -c "
-from shared.utils.socket_server import run_component_server
-run_component_server('telos', 'telos.api.app', 8008)
-"
+# Set environment variables
+export PYTHONPATH="$SCRIPT_DIR:$TEKTON_ROOT:$PYTHONPATH"
+
+# Create log directories
+mkdir -p "$HOME/.tekton/logs"
+
+# Check if virtual environment exists
+if [ -d "venv" ]; then
+    source venv/bin/activate
+fi
+
+# Check if port is already in use
+if lsof -Pi :$TELOS_PORT -sTCP:LISTEN -t >/dev/null 2>&1; then
+    echo -e "${RED}Port $TELOS_PORT is already in use. Telos might already be running.${RESET}"
+    exit 1
+fi
+
+# Start the Telos service
+echo -e "${YELLOW}Starting Telos API server on port $TELOS_PORT...${RESET}"
+python -m telos.api.app > "$HOME/.tekton/logs/telos.log" 2>&1 &
+TELOS_PID=$!
+
+# Trap signals for graceful shutdown
+trap "kill $TELOS_PID 2>/dev/null; exit" EXIT SIGINT SIGTERM
+
+# Wait for the server to start
+echo -e "${YELLOW}Waiting for Telos to start...${RESET}"
+for i in {1..30}; do
+    if curl -s http://localhost:$TELOS_PORT/health >/dev/null 2>&1; then
+        echo -e "${GREEN}${BOLD}Telos started successfully!${RESET}"
+        echo -e "${GREEN}Service endpoints:${RESET}"
+        echo -e "  ${BLUE}Main API:${RESET} http://localhost:$TELOS_PORT/api"
+        echo -e "  ${BLUE}Health:${RESET} http://localhost:$TELOS_PORT/health"
+        echo -e "  ${BLUE}Requirements:${RESET} http://localhost:$TELOS_PORT/api/requirements"
+        echo -e "  ${BLUE}Projects:${RESET} http://localhost:$TELOS_PORT/api/projects"
+        echo -e "  ${BLUE}Prometheus Integration:${RESET} http://localhost:$TELOS_PORT/api/prometheus"
+        break
+    fi
+    
+    # Check if the process is still running
+    if ! kill -0 $TELOS_PID 2>/dev/null; then
+        echo -e "${RED}Telos process terminated unexpectedly${RESET}"
+        echo -e "${RED}Last 20 lines of log:${RESET}"
+        tail -20 "$HOME/.tekton/logs/telos.log"
+        exit 1
+    fi
+    
+    echo -n "."
+    sleep 1
+done
+
+# Keep the script running
+echo -e "${BLUE}Telos is running. Press Ctrl+C to stop.${RESET}"
+wait $TELOS_PID
