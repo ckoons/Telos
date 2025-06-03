@@ -6,9 +6,10 @@ This module provides Pydantic models for requirement tracing.
 
 from typing import Dict, List, Optional, Any
 from datetime import datetime
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import Field, ConfigDict
+from tekton.models.base import TektonBaseModel
 
-class TraceBase(BaseModel):
+class TraceBase(TektonBaseModel):
     """Base model for trace data."""
     source_id: str
     target_id: str
@@ -20,7 +21,7 @@ class TraceCreate(TraceBase):
     """Model for trace creation."""
     pass
 
-class TraceUpdate(BaseModel):
+class TraceUpdate(TektonBaseModel):
     """Model for trace updates."""
     trace_type: Optional[str] = None
     description: Optional[str] = None
@@ -34,7 +35,7 @@ class TraceModel(TraceBase):
     
     model_config = ConfigDict(from_attributes=True)
 
-class TraceListItem(BaseModel):
+class TraceListItem(TektonBaseModel):
     """Model for trace list item."""
     trace_id: str
     source_id: str
@@ -43,12 +44,12 @@ class TraceListItem(BaseModel):
     description: Optional[str] = None
     created_at: float
 
-class TraceList(BaseModel):
+class TraceList(TektonBaseModel):
     """Model for trace list."""
     traces: List[TraceListItem]
     count: int
 
-class TraceQueryResult(BaseModel):
+class TraceQueryResult(TektonBaseModel):
     """Model for trace query result."""
     source: Dict[str, Any]
     target: Dict[str, Any]

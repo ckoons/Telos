@@ -1,1 +1,49 @@
-"""\nValidation data models for Telos requirements management.\n\nThis module provides Pydantic models for requirement validation.\n"""\n\nfrom typing import Dict, List, Optional, Any\nfrom pydantic import BaseModel, Field\n\nclass ValidationCriteria(BaseModel):\n    """Model for validation criteria."""\n    check_completeness: Optional[bool] = True\n    check_verifiability: Optional[bool] = True\n    check_clarity: Optional[bool] = True\n    check_consistency: Optional[bool] = False\n    check_feasibility: Optional[bool] = False\n    custom_criteria: Optional[Dict[str, Any]] = None\n\nclass ValidationIssue(BaseModel):\n    """Model for validation issue."""\n    type: str\n    message: str\n    severity: Optional[str] = "warning"\n    suggestion: Optional[str] = None\n\nclass RequirementValidationResult(BaseModel):\n    """Model for requirement validation result."""\n    requirement_id: str\n    title: str\n    issues: List[ValidationIssue] = Field(default_factory=list)\n    passed: bool = True\n    score: Optional[float] = None\n\nclass ValidationSummary(BaseModel):\n    """Model for validation summary."""\n    total_requirements: int\n    passed: int\n    failed: int\n    pass_percentage: float\n    issues_by_type: Optional[Dict[str, int]] = None\n\nclass ValidationModel(BaseModel):\n    """Model for validation result."""\n    project_id: str\n    validation_date: float\n    results: List[RequirementValidationResult]\n    summary: ValidationSummary\n    criteria: ValidationCriteria
+"""
+Validation data models for Telos requirements management.
+
+This module provides Pydantic models for requirement validation.
+"""
+
+from typing import Dict, List, Optional, Any
+from pydantic import Field
+from tekton.models.base import TektonBaseModel
+
+class ValidationCriteria(TektonBaseModel):
+    """Model for validation criteria."""
+    check_completeness: Optional[bool] = True
+    check_verifiability: Optional[bool] = True
+    check_clarity: Optional[bool] = True
+    check_consistency: Optional[bool] = False
+    check_feasibility: Optional[bool] = False
+    custom_criteria: Optional[Dict[str, Any]] = None
+
+class ValidationIssue(TektonBaseModel):
+    """Model for validation issue."""
+    type: str
+    message: str
+    severity: Optional[str] = "warning"
+    suggestion: Optional[str] = None
+
+class RequirementValidationResult(TektonBaseModel):
+    """Model for requirement validation result."""
+    requirement_id: str
+    title: str
+    issues: List[ValidationIssue] = Field(default_factory=list)
+    passed: bool = True
+    score: Optional[float] = None
+
+class ValidationSummary(TektonBaseModel):
+    """Model for validation summary."""
+    total_requirements: int
+    passed: int
+    failed: int
+    pass_percentage: float
+    issues_by_type: Optional[Dict[str, int]] = None
+
+class ValidationModel(TektonBaseModel):
+    """Model for validation result."""
+    project_id: str
+    validation_date: float
+    results: List[RequirementValidationResult]
+    summary: ValidationSummary
+    criteria: ValidationCriteria

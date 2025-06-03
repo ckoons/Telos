@@ -1,1 +1,42 @@
-"""\nExport data models for Telos requirements management.\n\nThis module provides Pydantic models for data export and import.\n"""\n\nfrom typing import Dict, List, Optional, Any\nfrom pydantic import BaseModel, Field\n\nclass ExportOptions(BaseModel):\n    """Model for export options."""\n    format: str = "json"  # json, markdown, pdf, etc.\n    sections: Optional[List[str]] = None\n    include_metadata: Optional[bool] = True\n    include_history: Optional[bool] = False\n    include_traces: Optional[bool] = True\n\nclass ExportResult(BaseModel):\n    """Model for export result."""\n    format: str\n    content: Any\n    filename: Optional[str] = None\n\nclass ImportOptions(BaseModel):\n    """Model for import options."""\n    format: str = "json"\n    merge_strategy: Optional[str] = "replace"  # replace, merge, or skip\n    ignore_conflicts: Optional[bool] = False\n\nclass ImportResult(BaseModel):\n    """Model for import result."""\n    project_id: str\n    name: str\n    imported_requirements: int\n    conflicts: Optional[int] = 0\n    warnings: Optional[List[str]] = Field(default_factory=list)\n\nclass ExportModel(BaseModel):\n    """Model for export data."""\n    options: ExportOptions\n    result: ExportResult
+"""
+Export data models for Telos requirements management.
+
+This module provides Pydantic models for data export and import.
+"""
+
+from typing import Dict, List, Optional, Any
+from pydantic import Field
+from tekton.models.base import TektonBaseModel
+
+class ExportOptions(TektonBaseModel):
+    """Model for export options."""
+    format: str = "json"  # json, markdown, pdf, etc.
+    sections: Optional[List[str]] = None
+    include_metadata: Optional[bool] = True
+    include_history: Optional[bool] = False
+    include_traces: Optional[bool] = True
+
+class ExportResult(TektonBaseModel):
+    """Model for export result."""
+    format: str
+    content: Any
+    filename: Optional[str] = None
+
+class ImportOptions(TektonBaseModel):
+    """Model for import options."""
+    format: str = "json"
+    merge_strategy: Optional[str] = "replace"  # replace, merge, or skip
+    ignore_conflicts: Optional[bool] = False
+
+class ImportResult(TektonBaseModel):
+    """Model for import result."""
+    project_id: str
+    name: str
+    imported_requirements: int
+    conflicts: Optional[int] = 0
+    warnings: Optional[List[str]] = Field(default_factory=list)
+
+class ExportModel(TektonBaseModel):
+    """Model for export data."""
+    options: ExportOptions
+    result: ExportResult

@@ -6,15 +6,16 @@ This module provides Pydantic models for requirement data.
 
 from typing import Dict, List, Optional, Any
 from datetime import datetime
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import Field, ConfigDict
+from tekton.models.base import TektonBaseModel
 
-class HistoryEntry(BaseModel):
+class HistoryEntry(TektonBaseModel):
     """Model for requirement history entry."""
     timestamp: float
     action: str
     description: str
 
-class RequirementBase(BaseModel):
+class RequirementBase(TektonBaseModel):
     """Base model for requirement data."""
     title: str
     description: str
@@ -30,7 +31,7 @@ class RequirementCreate(RequirementBase):
     """Model for requirement creation."""
     created_by: Optional[str] = None
 
-class RequirementUpdate(BaseModel):
+class RequirementUpdate(TektonBaseModel):
     """Model for requirement updates."""
     title: Optional[str] = None
     description: Optional[str] = None
@@ -52,7 +53,7 @@ class RequirementModel(RequirementBase):
     
     model_config = ConfigDict(from_attributes=True)
 
-class RequirementListItem(BaseModel):
+class RequirementListItem(TektonBaseModel):
     """Model for requirement list item."""
     requirement_id: str
     title: str
@@ -63,17 +64,17 @@ class RequirementListItem(BaseModel):
     created_at: float
     updated_at: float
 
-class RequirementList(BaseModel):
+class RequirementList(TektonBaseModel):
     """Model for requirement list."""
     requirements: List[RequirementListItem]
     count: int
 
-class RequirementRefinement(BaseModel):
+class RequirementRefinement(TektonBaseModel):
     """Model for requirement refinement."""
     feedback: str
     auto_update: Optional[bool] = False
 
-class RequirementRefinementResult(BaseModel):
+class RequirementRefinementResult(TektonBaseModel):
     """Model for requirement refinement result."""
     requirement_id: str
     original: RequirementModel

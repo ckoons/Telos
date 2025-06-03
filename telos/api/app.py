@@ -18,7 +18,8 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Back
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
-from pydantic import BaseModel, Field
+from pydantic import Field
+from tekton.models.base import TektonBaseModel
 
 # Add Tekton root to path if not already present
 tekton_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
@@ -46,17 +47,17 @@ requirements_manager = None
 prometheus_connector = None
 
 # Request models
-class ProjectCreateRequest(BaseModel):
+class ProjectCreateRequest(TektonBaseModel):
     name: str
     description: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
 
-class ProjectUpdateRequest(BaseModel):
+class ProjectUpdateRequest(TektonBaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
 
-class RequirementCreateRequest(BaseModel):
+class RequirementCreateRequest(TektonBaseModel):
     title: str
     description: str
     requirement_type: Optional[str] = "functional"
@@ -68,7 +69,7 @@ class RequirementCreateRequest(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
     created_by: Optional[str] = None
 
-class RequirementUpdateRequest(BaseModel):
+class RequirementUpdateRequest(TektonBaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     requirement_type: Optional[str] = None
@@ -79,42 +80,42 @@ class RequirementUpdateRequest(BaseModel):
     dependencies: Optional[List[str]] = None
     metadata: Optional[Dict[str, Any]] = None
 
-class RequirementRefinementRequest(BaseModel):
+class RequirementRefinementRequest(TektonBaseModel):
     feedback: str
     auto_update: Optional[bool] = False
 
-class RequirementValidationRequest(BaseModel):
+class RequirementValidationRequest(TektonBaseModel):
     criteria: Dict[str, Any]
 
-class ProjectExportRequest(BaseModel):
+class ProjectExportRequest(TektonBaseModel):
     format: str = "json"  # json, markdown, pdf, etc.
     sections: Optional[List[str]] = None
 
-class ProjectImportRequest(BaseModel):
+class ProjectImportRequest(TektonBaseModel):
     data: Dict[str, Any]
     format: str = "json"
     merge_strategy: Optional[str] = "replace"  # replace, merge, or skip
 
-class TraceCreateRequest(BaseModel):
+class TraceCreateRequest(TektonBaseModel):
     source_id: str
     target_id: str
     trace_type: str
     description: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
 
-class TraceUpdateRequest(BaseModel):
+class TraceUpdateRequest(TektonBaseModel):
     trace_type: Optional[str] = None
     description: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
 
-class WebSocketRequest(BaseModel):
+class WebSocketRequest(TektonBaseModel):
     type: str
     source: str = "client"
     target: str = "server"
     timestamp: Optional[float] = None
     payload: Dict[str, Any]
 
-class WebSocketResponse(BaseModel):
+class WebSocketResponse(TektonBaseModel):
     type: str
     source: str = "server"
     target: str = "client"
