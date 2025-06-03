@@ -1280,20 +1280,11 @@ async def websocket_endpoint(websocket: WebSocket):
             pass
 
 if __name__ == "__main__":
-    import uvicorn
-    from uvicorn.config import LOGGING_CONFIG
+    from shared.utils.socket_server import run_component_server
     
-    # Get port from environment
-    port = int(os.environ.get("TELOS_PORT"))
-    
-    # Configure uvicorn with socket reuse
-    uvicorn.run(
-        "telos.api.app:app",
-        host="0.0.0.0",
-        port=port,
-        reload=True,
-        # Enable socket reuse to prevent port binding issues
-        server_header=False,
-        access_log=False,
-        use_colors=True
+    run_component_server(
+        component_name="telos",
+        app_module="telos.api.app",
+        default_port=int(os.environ.get("TELOS_PORT")),
+        reload=False
     )
