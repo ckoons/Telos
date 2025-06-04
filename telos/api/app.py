@@ -32,6 +32,15 @@ from shared.utils.logging_setup import setup_component_logging
 from shared.utils.shutdown import component_lifespan
 from shared.utils.startup import component_startup
 from shared.utils.env_config import get_component_config
+from shared.utils.health_check import create_health_response
+from shared.api import (
+    create_standard_routers,
+    mount_standard_routers,
+    create_ready_endpoint,
+    create_discovery_endpoint,
+    get_openapi_configuration,
+    EndpointInfo
+)
 
 from ..core.requirements_manager import RequirementsManager
 from ..core.project import Project
@@ -42,9 +51,16 @@ from .. import __version__
 # Configure logging
 logger = setup_component_logging("telos")
 
+# Component configuration
+COMPONENT_NAME = "Telos"
+COMPONENT_VERSION = __version__
+COMPONENT_DESCRIPTION = "Product Requirements, Goals and User Communication"
+
 # Initialize core components (will be set in startup event)
 requirements_manager = None
 prometheus_connector = None
+start_time = None
+is_registered_with_hermes = False
 
 # Request models
 class ProjectCreateRequest(TektonBaseModel):
@@ -125,16 +141,20 @@ class WebSocketResponse(TektonBaseModel):
 # Define startup and cleanup functions for lifespan
 async def startup_tasks():
     """Initialize components on startup"""
-    global requirements_manager, prometheus_connector
+    global requirements_manager, prometheus_connector, is_registered_with_hermes, start_time
+    
+    # Track startup time
+    import time
+    start_time = time.time()
     
     # Get port from environment
     port = int(os.environ.get("TELOS_PORT"))
     
     hermes_registration = HermesRegistration()
-    await hermes_registration.register_component(
+    is_registered_with_hermes = await hermes_registration.register_component(
         component_name="telos",
         port=port,
-        version=__version__,
+        version=COMPONENT_VERSION,
         capabilities=[
             "requirements_tracking",
             "requirement_validation",
@@ -234,10 +254,13 @@ async def cleanup_tasks():
     
     logger.info("Telos API shutdown complete")
 
-# Initialize FastAPI app with lifespan (after defining startup_tasks and cleanup_tasks)
+# Initialize FastAPI app with standard configuration
 app = FastAPI(
-    title="Telos Requirements Manager",
-    version=__version__,
+    **get_openapi_configuration(
+        component_name=COMPONENT_NAME,
+        component_version=COMPONENT_VERSION,
+        component_description=COMPONENT_DESCRIPTION
+    ),
     lifespan=component_lifespan(
         "telos",
         startup_tasks,
@@ -254,43 +277,47 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Create standard routers
+routers = create_standard_routers(COMPONENT_NAME)
 
-@app.get("/")
+
+@routers.root.get("/")
 async def root():
     """Root endpoint - provides basic information"""
     return {
-        "name": "Telos Requirements Manager",
-        "version": "0.1.0",
+        "name": f"{COMPONENT_NAME} Requirements Manager",
+        "version": COMPONENT_VERSION,
         "status": "running" if requirements_manager is not None else "initializing",
         "endpoints": [
-            "/api/projects", "/api/requirements", "/api/traces", 
-            "/api/validation", "/api/export", "/api/import", "/ws", "/events"
+            "/api/v1/projects", "/api/v1/requirements", "/api/v1/traces", 
+            "/api/v1/validation", "/api/v1/export", "/api/v1/import", "/ws", "/events"
         ],
         "prometheus_available": prometheus_connector.prometheus_available if prometheus_connector else False,
-        "project_count": len(requirements_manager.projects) if requirements_manager else 0
+        "project_count": len(requirements_manager.projects) if requirements_manager else 0,
+        "docs": "/api/v1/docs"
     }
 
-@app.get("/health")
+@routers.root.get("/health")
 async def health():
     """Health check endpoint following Tekton standards"""
     # Get port from environment
     port = int(os.environ.get("TELOS_PORT"))
     
-    return {
-        "status": "healthy",
-        "component": "telos",
-        "version": __version__,
-        "port": port,
-        "message": "Telos is running normally",
-        "details": {
+    return create_health_response(
+        component_name="telos",
+        port=port,
+        version=COMPONENT_VERSION,
+        status="healthy",
+        registered=is_registered_with_hermes,
+        details={
             "project_count": len(requirements_manager.projects) if requirements_manager else 0,
             "storage_dir": requirements_manager.storage_dir if requirements_manager else None,
             "prometheus_available": prometheus_connector.prometheus_available if prometheus_connector else False
         }
-    }
+    )
 
 # Project management endpoints
-@app.get("/api/projects")
+@routers.v1.get("/projects")
 async def list_projects():
     """List all projects"""
     if not requirements_manager:
@@ -312,7 +339,7 @@ async def list_projects():
     
     return {"projects": result, "count": len(result)}
 
-@app.post("/api/projects", status_code=201)
+@routers.v1.post("/projects", status_code=201)
 async def create_project(request: ProjectCreateRequest):
     """Create a new project"""
     if not requirements_manager:
@@ -335,7 +362,7 @@ async def create_project(request: ProjectCreateRequest):
         "created_at": project.created_at
     }
 
-@app.get("/api/projects/{project_id}")
+@routers.v1.get("/projects/{project_id}")
 async def get_project(project_id: str = Path(..., title="The ID of the project to get")):
     """Get a specific project with its requirements"""
     if not requirements_manager:
@@ -354,7 +381,7 @@ async def get_project(project_id: str = Path(..., title="The ID of the project t
     
     return result
 
-@app.put("/api/projects/{project_id}")
+@routers.v1.put("/projects/{project_id}")
 async def update_project(
     project_id: str = Path(..., title="The ID of the project to update"),
     request: ProjectUpdateRequest = Body(...)
@@ -394,7 +421,7 @@ async def update_project(
         "updated_at": project.updated_at
     }
 
-@app.delete("/api/projects/{project_id}")
+@routers.v1.delete("/projects/{project_id}")
 async def delete_project(project_id: str = Path(..., title="The ID of the project to delete")):
     """Delete a project"""
     if not requirements_manager:
@@ -407,7 +434,7 @@ async def delete_project(project_id: str = Path(..., title="The ID of the projec
     return {"success": True, "project_id": project_id}
 
 # Requirement management endpoints
-@app.post("/api/projects/{project_id}/requirements", status_code=201)
+@routers.v1.post("/projects/{project_id}/requirements", status_code=201)
 async def create_requirement(
     project_id: str = Path(..., title="The ID of the project"),
     request: RequirementCreateRequest = Body(...)
@@ -449,7 +476,7 @@ async def create_requirement(
         "created_at": requirement.created_at
     }
 
-@app.get("/api/projects/{project_id}/requirements")
+@routers.v1.get("/projects/{project_id}/requirements")
 async def list_requirements(
     project_id: str = Path(..., title="The ID of the project"),
     status: Optional[str] = None,
@@ -479,7 +506,7 @@ async def list_requirements(
     
     return {"requirements": result, "count": len(result)}
 
-@app.get("/api/projects/{project_id}/requirements/{requirement_id}")
+@routers.v1.get("/projects/{project_id}/requirements/{requirement_id}")
 async def get_requirement(
     project_id: str = Path(..., title="The ID of the project"),
     requirement_id: str = Path(..., title="The ID of the requirement")
@@ -498,7 +525,7 @@ async def get_requirement(
     
     return requirement.to_dict()
 
-@app.put("/api/projects/{project_id}/requirements/{requirement_id}")
+@routers.v1.put("/projects/{project_id}/requirements/{requirement_id}")
 async def update_requirement(
     project_id: str = Path(..., title="The ID of the project"),
     requirement_id: str = Path(..., title="The ID of the requirement"),
@@ -571,7 +598,7 @@ async def update_requirement(
         "updated_at": updated_requirement.updated_at if updated_requirement else None
     }
 
-@app.delete("/api/projects/{project_id}/requirements/{requirement_id}")
+@routers.v1.delete("/projects/{project_id}/requirements/{requirement_id}")
 async def delete_requirement(
     project_id: str = Path(..., title="The ID of the project"),
     requirement_id: str = Path(..., title="The ID of the requirement")
@@ -599,7 +626,7 @@ async def delete_requirement(
     return {"success": True, "project_id": project_id, "requirement_id": requirement_id}
 
 # Requirement refinement endpoints
-@app.post("/api/projects/{project_id}/requirements/{requirement_id}/refine")
+@routers.v1.post("/projects/{project_id}/requirements/{requirement_id}/refine")
 async def refine_requirement(
     project_id: str = Path(..., title="The ID of the project"),
     requirement_id: str = Path(..., title="The ID of the requirement"),
@@ -658,7 +685,7 @@ async def refine_requirement(
         raise HTTPException(status_code=500, detail=str(e))
 
 # Requirement validation endpoints
-@app.post("/api/projects/{project_id}/validate")
+@routers.v1.post("/projects/{project_id}/validate")
 async def validate_project(
     project_id: str = Path(..., title="The ID of the project"),
     request: RequirementValidationRequest = Body(...)
@@ -749,7 +776,7 @@ async def validate_project(
         raise HTTPException(status_code=500, detail=str(e))
 
 # Requirement tracing endpoints
-@app.get("/api/projects/{project_id}/traces")
+@routers.v1.get("/projects/{project_id}/traces")
 async def list_traces(project_id: str = Path(..., title="The ID of the project")):
     """List all requirement traces for a project"""
     if not requirements_manager:
@@ -765,7 +792,7 @@ async def list_traces(project_id: str = Path(..., title="The ID of the project")
     
     return {"traces": traces, "count": len(traces)}
 
-@app.post("/api/projects/{project_id}/traces", status_code=201)
+@routers.v1.post("/projects/{project_id}/traces", status_code=201)
 async def create_trace(
     project_id: str = Path(..., title="The ID of the project"),
     request: TraceCreateRequest = Body(...)
@@ -817,7 +844,7 @@ async def create_trace(
         "target_id": request.target_id
     }
 
-@app.get("/api/projects/{project_id}/traces/{trace_id}")
+@routers.v1.get("/projects/{project_id}/traces/{trace_id}")
 async def get_trace(
     project_id: str = Path(..., title="The ID of the project"),
     trace_id: str = Path(..., title="The ID of the trace")
@@ -840,7 +867,7 @@ async def get_trace(
     
     return trace
 
-@app.put("/api/projects/{project_id}/traces/{trace_id}")
+@routers.v1.put("/projects/{project_id}/traces/{trace_id}")
 async def update_trace(
     project_id: str = Path(..., title="The ID of the project"),
     trace_id: str = Path(..., title="The ID of the trace"),
@@ -893,7 +920,7 @@ async def update_trace(
         "updated_at": trace["updated_at"]
     }
 
-@app.delete("/api/projects/{project_id}/traces/{trace_id}")
+@routers.v1.delete("/projects/{project_id}/traces/{trace_id}")
 async def delete_trace(
     project_id: str = Path(..., title="The ID of the project"),
     trace_id: str = Path(..., title="The ID of the trace")
@@ -925,7 +952,7 @@ async def delete_trace(
     return {"success": True, "trace_id": trace_id}
 
 # Project export/import endpoints
-@app.post("/api/projects/{project_id}/export")
+@routers.v1.post("/projects/{project_id}/export")
 async def export_project(
     project_id: str = Path(..., title="The ID of the project"),
     request: ProjectExportRequest = Body(...)
@@ -1046,7 +1073,7 @@ async def export_project(
         # Unsupported format
         raise HTTPException(status_code=400, detail=f"Unsupported export format: {request.format}")
 
-@app.post("/api/projects/import", status_code=201)
+@routers.v1.post("/projects/import", status_code=201)
 async def import_project(request: ProjectImportRequest = Body(...)):
     """Import a project from external data"""
     if not requirements_manager:
@@ -1095,7 +1122,7 @@ async def import_project(request: ProjectImportRequest = Body(...)):
         raise HTTPException(status_code=400, detail=f"Unsupported import format: {request.format}")
 
 # Planning endpoints (integration with Prometheus)
-@app.post("/api/projects/{project_id}/analyze")
+@routers.v1.post("/projects/{project_id}/analyze")
 async def analyze_requirements(project_id: str = Path(..., title="The ID of the project")):
     """Analyze requirements for planning readiness"""
     if not requirements_manager:
@@ -1118,7 +1145,7 @@ async def analyze_requirements(project_id: str = Path(..., title="The ID of the 
         logger.error(f"Error analyzing requirements: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/projects/{project_id}/plan")
+@routers.v1.post("/projects/{project_id}/plan")
 async def create_plan(project_id: str = Path(..., title="The ID of the project")):
     """Create a plan for the project using Prometheus"""
     if not requirements_manager:
@@ -1278,6 +1305,94 @@ async def websocket_endpoint(websocket: WebSocket):
             })
         except:
             pass
+
+# Add ready endpoint
+routers.root.add_api_route(
+    "/ready",
+    create_ready_endpoint(
+        component_name=COMPONENT_NAME,
+        component_version=COMPONENT_VERSION,
+        start_time=start_time or 0,
+        readiness_check=lambda: requirements_manager is not None
+    ),
+    methods=["GET"]
+)
+
+# Add discovery endpoint to v1 router
+routers.v1.add_api_route(
+    "/discovery",
+    create_discovery_endpoint(
+        component_name=COMPONENT_NAME,
+        component_version=COMPONENT_VERSION,
+        component_description=COMPONENT_DESCRIPTION,
+        endpoints=[
+            EndpointInfo(
+                path="/api/v1/projects",
+                method="GET",
+                description="List all projects"
+            ),
+            EndpointInfo(
+                path="/api/v1/projects",
+                method="POST",
+                description="Create a new project"
+            ),
+            EndpointInfo(
+                path="/api/v1/projects/{project_id}/requirements",
+                method="GET",
+                description="List project requirements"
+            ),
+            EndpointInfo(
+                path="/api/v1/projects/{project_id}/requirements",
+                method="POST",
+                description="Create a new requirement"
+            ),
+            EndpointInfo(
+                path="/api/v1/projects/{project_id}/validate",
+                method="POST",
+                description="Validate project requirements"
+            ),
+            EndpointInfo(
+                path="/api/v1/projects/{project_id}/export",
+                method="POST",
+                description="Export project"
+            ),
+            EndpointInfo(
+                path="/ws",
+                method="WEBSOCKET",
+                description="WebSocket for real-time updates"
+            )
+        ],
+        capabilities=[
+            "requirements_tracking",
+            "requirement_validation",
+            "requirement_tracing",
+            "prometheus_integration",
+            "llm_refinement",
+            "export_import"
+        ],
+        dependencies={
+            "hermes": "http://localhost:8001",
+            "prometheus": "http://localhost:8007"
+        },
+        metadata={
+            "websocket_endpoint": "/ws",
+            "documentation": "/api/v1/docs"
+        }
+    ),
+    methods=["GET"]
+)
+
+# Mount standard routers
+mount_standard_routers(app, routers)
+
+# Import and include MCP router if available
+try:
+    from telos.api.fastmcp_endpoints import mcp_router
+    app.include_router(mcp_router)
+    logger.info("FastMCP endpoints added to Telos API")
+except ImportError as e:
+    logger.warning(f"FastMCP endpoints not available: {e}")
+
 
 if __name__ == "__main__":
     from shared.utils.socket_server import run_component_server
