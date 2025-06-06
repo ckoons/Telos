@@ -237,10 +237,25 @@ async def startup_tasks():
         logger.warning(f"Failed to initialize FastMCP integration: {e}")
         logger.warning("Telos will continue without FastMCP capabilities")
     
+    # Initialize Hermes MCP Bridge
+    try:
+        from telos.core.mcp.hermes_bridge import TelosMCPBridge
+        mcp_bridge = TelosMCPBridge(requirements_manager, prometheus_connector)
+        await mcp_bridge.initialize()
+        app.state.mcp_bridge = mcp_bridge
+        logger.info("Hermes MCP Bridge initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize Hermes MCP Bridge: {e}")
+    
     logger.info("Telos API initialized with requirements manager and Prometheus connector")
 
 async def cleanup_tasks():
     """Cleanup on shutdown"""
+    # Shutdown Hermes MCP Bridge
+    if hasattr(app.state, "mcp_bridge") and app.state.mcp_bridge:
+        await app.state.mcp_bridge.shutdown()
+        logger.info("Hermes MCP Bridge shutdown complete")
+    
     # Deregister from Hermes
     if hasattr(app.state, "hermes_registration") and app.state.hermes_registration:
         await app.state.hermes_registration.deregister("telos")

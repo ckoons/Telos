@@ -24,8 +24,9 @@ fi
 # Ensure we're in the correct directory
 cd "$SCRIPT_DIR"
 
-# Set environment variables
-export PYTHONPATH="$SCRIPT_DIR:$TEKTON_ROOT:$PYTHONPATH"
+# Set up environment and Python path
+source "$TEKTON_ROOT/shared/utils/setup_env.sh"
+setup_tekton_env "$SCRIPT_DIR" "$TEKTON_ROOT"
 
 # Create log directories
 mkdir -p "$HOME/.tekton/logs"
