@@ -12,9 +12,9 @@ from tekton.mcp.fastmcp.schema import MCPCapability
 class StrategicAnalysisCapability(MCPCapability):
     """Capability for strategic analysis and planning operations."""
     
-    name = "strategic_analysis"
-    description = "Analyze strategic landscape, feasibility, and outcomes"
-    version = "1.0.0"
+    name: str = "strategic_analysis"
+    description: str = "Analyze strategic landscape, feasibility, and outcomes"
+    version: str = "1.0.0"
     
     @classmethod
     def get_supported_operations(cls) -> List[str]:
@@ -46,9 +46,9 @@ class StrategicAnalysisCapability(MCPCapability):
 class GoalManagementCapability(MCPCapability):
     """Capability for strategic goal creation, tracking, and management."""
     
-    name = "goal_management"
-    description = "Create, track, and manage strategic goals and objectives"
-    version = "1.0.0"
+    name: str = "goal_management"
+    description: str = "Create, track, and manage strategic goals and objectives"
+    version: str = "1.0.0"
     
     @classmethod
     def get_supported_operations(cls) -> List[str]:
@@ -80,9 +80,9 @@ class GoalManagementCapability(MCPCapability):
 class DecisionSupportCapability(MCPCapability):
     """Capability for strategic decision support and scenario analysis."""
     
-    name = "decision_support"
-    description = "Support strategic decision-making and planning"
-    version = "1.0.0"
+    name: str = "decision_support"
+    description: str = "Support strategic decision-making and planning"
+    version: str = "1.0.0"
     
     @classmethod
     def get_supported_operations(cls) -> List[str]:

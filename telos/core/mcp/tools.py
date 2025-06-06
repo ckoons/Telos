@@ -5,9 +5,30 @@ This module defines FastMCP tools for requirements management, tracing, validati
 and strategic planning using the decorator-based approach.
 """
 
+import logging
 from typing import Dict, Any, List, Optional
-from tekton.mcp.fastmcp.decorators import mcp_tool, mcp_capability
-from tekton.mcp.fastmcp.schema import MCPTool
+
+# Check if FastMCP is available
+try:
+    from tekton.mcp.fastmcp.decorators import mcp_tool, mcp_capability
+    from tekton.mcp.fastmcp.schema import MCPTool
+    fastmcp_available = True
+except ImportError:
+    fastmcp_available = False
+    # Define dummy decorators
+    def mcp_tool(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+    
+    def mcp_capability(*args, **kwargs):
+        def decorator(cls):
+            return cls
+        return decorator
+    
+    MCPTool = None
+
+logger = logging.getLogger(__name__)
 
 
 @mcp_capability(
@@ -20,7 +41,7 @@ class RequirementsManagementCapability:
 
 
 @mcp_tool(
-    capability="requirements_management",
+    category="requirements_management",
     name="create_project",
     description="Create a new requirements project"
 )
@@ -68,7 +89,7 @@ async def create_project(
 
 
 @mcp_tool(
-    capability="requirements_management",
+    category="requirements_management",
     name="get_project",
     description="Get a project with its requirements and hierarchy"
 )
@@ -107,7 +128,7 @@ async def get_project(
 
 
 @mcp_tool(
-    capability="requirements_management",
+    category="requirements_management",
     name="list_projects",
     description="List all requirements projects"
 )
@@ -146,7 +167,7 @@ async def list_projects(
 
 
 @mcp_tool(
-    capability="requirements_management",
+    category="requirements_management",
     name="create_requirement",
     description="Create a new requirement in a project"
 )
@@ -226,7 +247,7 @@ async def create_requirement(
 
 
 @mcp_tool(
-    capability="requirements_management",
+    category="requirements_management",
     name="get_requirement",
     description="Get a specific requirement by ID"
 )
@@ -260,7 +281,7 @@ async def get_requirement(
 
 
 @mcp_tool(
-    capability="requirements_management",
+    category="requirements_management",
     name="update_requirement",
     description="Update a requirement with new information"
 )
@@ -368,7 +389,7 @@ class RequirementTracingCapability:
 
 
 @mcp_tool(
-    capability="requirement_tracing",
+    category="requirement_tracing",
     name="create_trace",
     description="Create a trace between two requirements"
 )
@@ -451,7 +472,7 @@ async def create_trace(
 
 
 @mcp_tool(
-    capability="requirement_tracing",
+    category="requirement_tracing",
     name="list_traces",
     description="List all traces for a project"
 )
@@ -496,7 +517,7 @@ class RequirementValidationCapability:
 
 
 @mcp_tool(
-    capability="requirement_validation",
+    category="requirement_validation",
     name="validate_project",
     description="Validate all requirements in a project against quality criteria"
 )
@@ -624,7 +645,7 @@ class PrometheusIntegrationCapability:
 
 
 @mcp_tool(
-    capability="prometheus_integration",
+    category="prometheus_integration",
     name="analyze_requirements",
     description="Analyze requirements for planning readiness using Prometheus"
 )
@@ -664,7 +685,7 @@ async def analyze_requirements(
 
 
 @mcp_tool(
-    capability="prometheus_integration",
+    category="prometheus_integration",
     name="create_plan",
     description="Create a strategic plan for the project using Prometheus"
 )
@@ -749,3 +770,27 @@ __all__ = [
     "analyze_requirements",
     "create_plan"
 ]
+
+def get_all_tools(component_manager=None):
+    """Get all Telos MCP tools."""
+    if not fastmcp_available:
+        logger.warning("FastMCP not available, returning empty tools list")
+        return []
+        
+    tools = []
+    
+    # Telos tools
+    tools.append(create_project._mcp_tool_meta.to_dict())
+    tools.append(get_project._mcp_tool_meta.to_dict())
+    tools.append(list_projects._mcp_tool_meta.to_dict())
+    tools.append(create_requirement._mcp_tool_meta.to_dict())
+    tools.append(get_requirement._mcp_tool_meta.to_dict())
+    tools.append(update_requirement._mcp_tool_meta.to_dict())
+    tools.append(create_trace._mcp_tool_meta.to_dict())
+    tools.append(list_traces._mcp_tool_meta.to_dict())
+    tools.append(validate_project._mcp_tool_meta.to_dict())
+    tools.append(analyze_requirements._mcp_tool_meta.to_dict())
+    tools.append(create_plan._mcp_tool_meta.to_dict())
+    
+    logger.info(f"get_all_tools returning {len(tools)} Telos MCP tools")
+    return tools
