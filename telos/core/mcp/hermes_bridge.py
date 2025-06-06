@@ -43,7 +43,7 @@ class TelosMCPBridge(MCPService):
         
         # Load FastMCP tools
         try:
-            from telos.core.mcp import get_all_tools
+            from telos.core.mcp.tools import get_all_tools
             self._fastmcp_tools = get_all_tools()
             logger.info(f"Loaded {len(self._fastmcp_tools)} FastMCP tools")
         except Exception as e:
