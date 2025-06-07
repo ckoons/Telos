@@ -29,7 +29,8 @@ source "$TEKTON_ROOT/shared/utils/setup_env.sh"
 setup_tekton_env "$SCRIPT_DIR" "$TEKTON_ROOT"
 
 # Create log directories
-mkdir -p "$HOME/.tekton/logs"
+LOG_DIR="${TEKTON_LOG_DIR:-$TEKTON_ROOT/.tekton/logs}"
+mkdir -p "$LOG_DIR"
 
 # Check if virtual environment exists
 if [ -d "venv" ]; then
@@ -44,7 +45,7 @@ fi
 
 # Start the Telos service
 echo -e "${YELLOW}Starting Telos API server on port $TELOS_PORT...${RESET}"
-python -m telos > "$HOME/.tekton/logs/telos.log" 2>&1 &
+python -m telos > "$LOG_DIR/telos.log" 2>&1 &
 TELOS_PID=$!
 
 # Trap signals for graceful shutdown
@@ -68,7 +69,7 @@ for i in {1..30}; do
     if ! kill -0 $TELOS_PID 2>/dev/null; then
         echo -e "${RED}Telos process terminated unexpectedly${RESET}"
         echo -e "${RED}Last 20 lines of log:${RESET}"
-        tail -20 "$HOME/.tekton/logs/telos.log"
+        tail -20 "$LOG_DIR/telos.log"
         exit 1
     fi
     
