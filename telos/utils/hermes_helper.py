@@ -12,6 +12,13 @@ import asyncio
 import aiohttp
 from typing import Optional, Dict, Any, List, Union
 
+# Add Tekton root to path for shared imports
+tekton_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
+if tekton_root not in sys.path:
+    sys.path.append(tekton_root)
+
+from shared.utils.env_config import get_component_config
+
 logger = logging.getLogger(__name__)
 
 class HermesHelper:
@@ -24,8 +31,9 @@ class HermesHelper:
         Args:
             api_url: Optional URL for the Hermes API
         """
-        # Default to environment variable or standard port from Single Port Architecture
-        hermes_port = os.environ.get("HERMES_PORT", "8001")
+        # Get configuration
+        config = get_component_config()
+        hermes_port = config.hermes.port if hasattr(config, 'hermes') else int(os.environ.get("HERMES_PORT"))
         self.api_url = api_url or os.environ.get("HERMES_API_URL", f"http://localhost:{hermes_port}/api")
         self.is_registered = False
         self.services = {}
@@ -292,7 +300,8 @@ async def register_with_hermes(
     """
     # Use environment variable for endpoint if not provided
     if not endpoint:
-        telos_port = os.environ.get("TELOS_PORT", "8008")
+        config = get_component_config()
+        telos_port = config.telos.port if hasattr(config, 'telos') else int(os.environ.get("TELOS_PORT"))
         endpoint = f"http://localhost:{telos_port}/api"
     
     # Create a helper and use it to register
