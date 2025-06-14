@@ -13,27 +13,21 @@ import json
 from typing import Dict, List, Optional, Any, Union
 from datetime import datetime
 
-import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks, Query, Path, Depends, Body, APIRouter
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks, Query, Path, Depends, Body, APIRouter, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 from pydantic import Field
 from tekton.models.base import TektonBaseModel
-from contextlib import asynccontextmanager
 
 # Add Tekton root to path if not already present
 tekton_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 if tekton_root not in sys.path:
     sys.path.insert(0, tekton_root)
 
-# Import shared utilities
-from shared.utils.hermes_registration import HermesRegistration, heartbeat_loop
-from shared.utils.logging_setup import setup_component_logging
-from shared.utils.shutdown import GracefulShutdown
-from shared.utils.startup import component_startup
-from shared.utils.env_config import get_component_config
-from shared.utils.health_check import create_health_response
+# Import shared utils
+from shared.utils.global_config import GlobalConfig
+from shared.utils.logging_setup import setup_component_logging as setup_component_logger
 from shared.api import (
     create_standard_routers,
     mount_standard_routers,
@@ -43,25 +37,16 @@ from shared.api import (
     EndpointInfo
 )
 
-from ..core.requirements_manager import RequirementsManager
+# Use shared logger
+logger = setup_component_logger("telos")
+
+from ..core.telos_component import TelosComponent
 from ..core.project import Project
 from ..core.requirement import Requirement
-from ..prometheus_connector import TelosPrometheusConnector
 from .. import __version__
 
-# Configure logging
-logger = setup_component_logging("telos")
-
-# Component configuration
-COMPONENT_NAME = "Telos"
-COMPONENT_VERSION = __version__
-COMPONENT_DESCRIPTION = "Product Requirements, Goals and User Communication"
-
-# Initialize core components (will be set in startup event)
-requirements_manager = None
-prometheus_connector = None
-start_time = None
-is_registered_with_hermes = False
+# Create component instance (singleton)
+component = TelosComponent()
 
 # Request models
 class ProjectCreateRequest(TektonBaseModel):
@@ -139,194 +124,79 @@ class WebSocketResponse(TektonBaseModel):
     timestamp: float
     payload: Dict[str, Any]
 
-# Global variables for resources
-hermes_registration = None
-heartbeat_task = None
-mcp_bridge = None
-
-# Create lifespan context manager
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Lifespan manager for Telos component."""
-    global requirements_manager, prometheus_connector, is_registered_with_hermes, start_time
-    global hermes_registration, heartbeat_task, mcp_bridge
+async def startup_callback():
+    """Initialize component during startup."""
+    # Initialize the component (registers with Hermes, etc.)
+    await component.initialize(
+        capabilities=component.get_capabilities(),
+        metadata=component.get_metadata()
+    )
     
-    # Define startup function
-    async def telos_startup():
-        """Initialize components on startup"""
-        global requirements_manager, prometheus_connector, is_registered_with_hermes, start_time
-        global hermes_registration, heartbeat_task, mcp_bridge
-        
-        # Track startup time
-        import time
-        start_time = time.time()
-        
-        # Get port from environment
-        port = int(os.environ.get("TELOS_PORT"))
-        
-        hermes_registration = HermesRegistration()
-        is_registered_with_hermes = await hermes_registration.register_component(
-            component_name="telos",
-            port=port,
-            version=COMPONENT_VERSION,
-            capabilities=[
-                "requirements_tracking",
-                "requirement_validation",
-                "requirement_tracing",
-                "prometheus_integration"
-            ],
-            metadata={
-                "description": "Requirements tracking and validation",
-                "category": "planning"
-            }
-        )
-        app.state.hermes_registration = hermes_registration
-        
-        # Start heartbeat task
-        if hermes_registration.is_registered:
-            heartbeat_task = asyncio.create_task(heartbeat_loop(hermes_registration, "telos"))
-        
-        # Load environment variables for configuration
-        storage_dir = os.environ.get("TELOS_STORAGE_DIR", os.path.join(os.getcwd(), "data", "requirements"))
-        
-        # Ensure storage directory exists
-        os.makedirs(storage_dir, exist_ok=True)
-        
-        # Initialize requirements manager
-        requirements_manager = RequirementsManager(storage_dir=storage_dir)
-        requirements_manager.load_projects()
-        
-        # Initialize Prometheus connector
-        prometheus_connector = TelosPrometheusConnector(requirements_manager)
-        try:
-            await prometheus_connector.initialize()
-        except Exception as e:
-            logger.warning(f"Failed to initialize Prometheus connector: {e}")
-        
-        # Initialize FastMCP integration
-        try:
-            from tekton.mcp.fastmcp.server import FastMCPServer
-            from tekton.mcp.fastmcp.utils.endpoints import add_mcp_endpoints
-            from ..core.mcp.tools import (
-                requirements_management_tools,
-                requirement_tracing_tools,
-                requirement_validation_tools,
-                prometheus_integration_tools
-            )
-            
-            # Create FastMCP server
-            fastmcp_server = FastMCPServer(
-                name="telos",
-                version=__version__, 
-                description="Telos Requirements Management MCP Server"
-            )
-            
-            # Tools are already registered by the @mcp_tool decorator
-            # No need to manually register them
-            
-            # Create MCP router
-            mcp_router = APIRouter(prefix="/api/mcp/v2")
-            add_mcp_endpoints(mcp_router, fastmcp_server)
-            
-            # Add custom health endpoint
-            @mcp_router.get("/health")
-            async def fastmcp_health():
-                """Health check endpoint for FastMCP."""
-                return {
-                    "status": "healthy",
-                    "service": "telos-fastmcp-integrated",
-                    "version": "1.0.0",
-                    "tools_registered": len(fastmcp_server._tools),
-                    "capabilities_registered": len(fastmcp_server._capabilities),
-                    "requirements_manager_available": requirements_manager is not None,
-                    "prometheus_connector_available": prometheus_connector is not None
-                }
-            
-            # Include MCP router in main app
-            app.include_router(mcp_router, prefix="/api/mcp/v2")
-            
-            logger.info(f"FastMCP integration initialized successfully")
-            
-        except Exception as e:
-            logger.warning(f"Failed to initialize FastMCP integration: {e}")
-            logger.warning("Telos will continue without FastMCP capabilities")
-        
-        # Initialize Hermes MCP Bridge
-        try:
-            from telos.core.mcp.hermes_bridge import TelosMCPBridge
-            mcp_bridge = TelosMCPBridge(requirements_manager, prometheus_connector)
-            await mcp_bridge.initialize()
-            app.state.mcp_bridge = mcp_bridge
-            logger.info("Hermes MCP Bridge initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize Hermes MCP Bridge: {e}")
-        
-        logger.info("Telos API initialized with requirements manager and Prometheus connector")
-    
-    # Execute startup with metrics
+    # Initialize FastMCP integration
     try:
-        metrics = await component_startup("telos", telos_startup, timeout=30)
-        logger.info(f"Telos started successfully in {metrics.total_time:.2f}s")
-    except Exception as e:
-        logger.error(f"Failed to start Telos: {e}")
-        raise
-    
-    # Create shutdown handler
-    shutdown = GracefulShutdown("telos")
-    
-    # Register cleanup tasks
-    async def cleanup_hermes():
-        """Cleanup Hermes registration."""
-        if heartbeat_task:
-            heartbeat_task.cancel()
-            try:
-                await heartbeat_task
-            except asyncio.CancelledError:
-                pass
+        from tekton.mcp.fastmcp.server import FastMCPServer
+        from tekton.mcp.fastmcp.utils.endpoints import add_mcp_endpoints
+        from ..core.mcp.tools import (
+            requirements_management_tools,
+            requirement_tracing_tools,
+            requirement_validation_tools,
+            prometheus_integration_tools
+        )
         
-        if hermes_registration:
-            await hermes_registration.deregister("telos")
-            logger.info("Deregistered from Hermes")
+        # Create FastMCP server
+        fastmcp_server = FastMCPServer(
+            name="telos",
+            version=__version__, 
+            description="Telos Requirements Management MCP Server"
+        )
+        
+        # Tools are already registered by the @mcp_tool decorator
+        # No need to manually register them
+        
+        # Create MCP router
+        mcp_router = APIRouter(prefix="/api/mcp/v2")
+        add_mcp_endpoints(mcp_router, fastmcp_server)
+        
+        # Add custom health endpoint
+        @mcp_router.get("/health")
+        async def fastmcp_health():
+            """Health check endpoint for FastMCP."""
+            return {
+                "status": "healthy",
+                "service": "telos-fastmcp-integrated",
+                "version": "1.0.0",
+                "tools_registered": len(fastmcp_server._tools),
+                "capabilities_registered": len(fastmcp_server._capabilities),
+                "requirements_manager_available": component.requirements_manager is not None,
+                "prometheus_connector_available": component.prometheus_connector is not None
+            }
+        
+        # Include MCP router in main app
+        app.include_router(mcp_router, prefix="/api/mcp/v2")
+        
+        logger.info(f"FastMCP integration initialized successfully")
+        
+    except Exception as e:
+        logger.warning(f"Failed to initialize FastMCP integration: {e}")
+        logger.warning("Telos will continue without FastMCP capabilities")
     
-    async def cleanup_mcp_bridge():
-        """Cleanup MCP bridge."""
-        if mcp_bridge:
-            try:
-                await mcp_bridge.shutdown()
-                logger.info("Hermes MCP Bridge shutdown complete")
-            except Exception as e:
-                logger.warning(f"Error shutting down MCP bridge: {e}")
-    
-    async def cleanup_prometheus():
-        """Cleanup Prometheus connector."""
-        if prometheus_connector:
-            try:
-                await prometheus_connector.shutdown()
-                logger.info("Prometheus connector shutdown complete")
-            except Exception as e:
-                logger.warning(f"Error shutting down Prometheus connector: {e}")
-    
-    shutdown.register_cleanup(cleanup_hermes)
-    shutdown.register_cleanup(cleanup_mcp_bridge)
-    shutdown.register_cleanup(cleanup_prometheus)
-    
-    yield
-    
-    # Shutdown
-    logger.info("Shutting down Telos API")
-    await shutdown.shutdown_sequence(timeout=10)
-    
-    # Socket release delay for macOS
-    await asyncio.sleep(0.5)
+    # Initialize Hermes MCP Bridge
+    try:
+        from telos.core.mcp.hermes_bridge import TelosMCPBridge
+        component.mcp_bridge = TelosMCPBridge(component.requirements_manager, component.prometheus_connector)
+        await component.mcp_bridge.initialize()
+        logger.info("Hermes MCP Bridge initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize Hermes MCP Bridge: {e}")
 
-# Initialize FastAPI app with standard configuration
-app = FastAPI(
+# Create FastAPI application using component's create_app
+app = component.create_app(
+    startup_callback=startup_callback,
     **get_openapi_configuration(
-        component_name=COMPONENT_NAME,
-        component_version=COMPONENT_VERSION,
-        component_description=COMPONENT_DESCRIPTION
-    ),
-    lifespan=lifespan
+        component_name=component.component_name.capitalize(),
+        component_version=component.version,
+        component_description=component.get_metadata()["description"]
+    )
 )
 
 # Add CORS middleware
@@ -339,52 +209,113 @@ app.add_middleware(
 )
 
 # Create standard routers
-routers = create_standard_routers(COMPONENT_NAME)
+routers = create_standard_routers(component.component_name.capitalize())
 
+# Add infrastructure endpoints to root router
+@routers.root.get("/health")
+async def health():
+    """Health check endpoint."""
+    return component.get_health_status()
+
+# Add ready endpoint
+@routers.root.get("/ready")
+async def ready():
+    """Readiness check endpoint."""
+    ready_check = create_ready_endpoint(
+        component_name=component.component_name.capitalize(),
+        component_version=component.version,
+        start_time=component.global_config._start_time,
+        readiness_check=lambda: component.requirements_manager is not None
+    )
+    return await ready_check()
+
+# Add discovery endpoint to v1 router
+@routers.v1.get("/discovery")
+async def discovery():
+    """Service discovery endpoint."""
+    capabilities = component.get_capabilities()
+    metadata = component.get_metadata()
+    
+    discovery_check = create_discovery_endpoint(
+        component_name=component.component_name.capitalize(),
+        component_version=component.version,
+        component_description=metadata["description"],
+        endpoints=[
+            EndpointInfo(
+                path="/api/v1/projects",
+                method="GET",
+                description="List all projects"
+            ),
+            EndpointInfo(
+                path="/api/v1/projects",
+                method="POST",
+                description="Create a new project"
+            ),
+            EndpointInfo(
+                path="/api/v1/projects/{project_id}/requirements",
+                method="GET",
+                description="List project requirements"
+            ),
+            EndpointInfo(
+                path="/api/v1/projects/{project_id}/requirements",
+                method="POST",
+                description="Create a new requirement"
+            ),
+            EndpointInfo(
+                path="/api/v1/projects/{project_id}/validate",
+                method="POST",
+                description="Validate project requirements"
+            ),
+            EndpointInfo(
+                path="/api/v1/projects/{project_id}/export",
+                method="POST",
+                description="Export project"
+            ),
+            EndpointInfo(
+                path="/ws",
+                method="WEBSOCKET",
+                description="WebSocket for real-time updates"
+            )
+        ],
+        capabilities=capabilities,
+        dependencies={
+            "hermes": "http://localhost:8001",
+            "prometheus": "http://localhost:8006"
+        },
+        metadata={
+            **metadata,
+            "websocket_endpoint": "/ws",
+            "documentation": "/api/v1/docs"
+        }
+    )
+    return await discovery_check()
 
 @routers.root.get("/")
 async def root():
     """Root endpoint - provides basic information"""
+    metadata = component.get_metadata()
     return {
-        "name": f"{COMPONENT_NAME} Requirements Manager",
-        "version": COMPONENT_VERSION,
-        "status": "running" if requirements_manager is not None else "initializing",
-        "endpoints": [
-            "/api/v1/projects", "/api/v1/requirements", "/api/v1/traces", 
-            "/api/v1/validation", "/api/v1/export", "/api/v1/import", "/ws", "/events"
+        "message": f"Welcome to {component.component_name.capitalize()} API",
+        "version": component.version,
+        "description": metadata["description"],
+        "features": [
+            "Requirements tracking",
+            "Requirement validation",
+            "Requirement tracing",
+            "Prometheus integration",
+            "Export/Import capabilities"
         ],
-        "prometheus_available": prometheus_connector.prometheus_available if prometheus_connector else False,
-        "project_count": len(requirements_manager.projects) if requirements_manager else 0,
         "docs": "/api/v1/docs"
     }
-
-@routers.root.get("/health")
-async def health():
-    """Health check endpoint following Tekton standards"""
-    # Get port from environment
-    port = int(os.environ.get("TELOS_PORT"))
-    
-    return create_health_response(
-        component_name="telos",
-        port=port,
-        version=COMPONENT_VERSION,
-        status="healthy",
-        registered=is_registered_with_hermes,
-        details={
-            "project_count": len(requirements_manager.projects) if requirements_manager else 0,
-            "storage_dir": requirements_manager.storage_dir if requirements_manager else None,
-            "prometheus_available": prometheus_connector.prometheus_available if prometheus_connector else False
-        }
-    )
 
 # Project management endpoints
 @routers.v1.get("/projects")
 async def list_projects():
     """List all projects"""
-    if not requirements_manager:
+    if not component.requirements_manager:
         raise HTTPException(status_code=503, detail="Requirements manager not initialized")
         
-    projects = requirements_manager.get_all_projects()
+    projects = component.requirements_manager.get_all_projects()
     
     # Prepare a simplified response
     result = []
@@ -403,16 +334,16 @@ async def list_projects():
 @routers.v1.post("/projects", status_code=201)
 async def create_project(request: ProjectCreateRequest):
     """Create a new project"""
-    if not requirements_manager:
+    if not component.requirements_manager:
         raise HTTPException(status_code=503, detail="Requirements manager not initialized")
     
-    project_id = requirements_manager.create_project(
+    project_id = component.requirements_manager.create_project(
         name=request.name,
         description=request.description or "",
         metadata=request.metadata
     )
     
-    project = requirements_manager.get_project(project_id)
+    project = component.requirements_manager.get_project(project_id)
     if not project:
         raise HTTPException(status_code=500, detail="Failed to create project")
     
@@ -426,10 +357,10 @@ async def create_project(request: ProjectCreateRequest):
 @routers.v1.get("/projects/{project_id}")
 async def get_project(project_id: str = Path(..., title="The ID of the project to get")):
     """Get a specific project with its requirements"""
-    if not requirements_manager:
+    if not component.requirements_manager:
         raise HTTPException(status_code=503, detail="Requirements manager not initialized")
     
-    project = requirements_manager.get_project(project_id)
+    project = component.requirements_manager.get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
     
@@ -448,10 +379,10 @@ async def update_project(
     request: ProjectUpdateRequest = Body(...)
 ):
     """Update a project"""
-    if not requirements_manager:
+    if not component.requirements_manager:
         raise HTTPException(status_code=503, detail="Requirements manager not initialized")
     
-    project = requirements_manager.get_project(project_id)
+    project = component.requirements_manager.get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
     
@@ -474,7 +405,7 @@ async def update_project(
     if updates:
         project.updated_at = datetime.now().timestamp()
         # Save the project
-        requirements_manager._save_project(project)
+        component.requirements_manager._save_project(project)
     
     return {
         "project_id": project_id,
@@ -485,10 +416,10 @@ async def update_project(
 @routers.v1.delete("/projects/{project_id}")
 async def delete_project(project_id: str = Path(..., title="The ID of the project to delete")):
     """Delete a project"""
-    if not requirements_manager:
+    if not component.requirements_manager:
         raise HTTPException(status_code=503, detail="Requirements manager not initialized")
     
-    success = requirements_manager.delete_project(project_id)
+    success = component.requirements_manager.delete_project(project_id)
     if not success:
         raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
     
@@ -501,16 +432,16 @@ async def create_requirement(
     request: RequirementCreateRequest = Body(...)
 ):
     """Create a new requirement in a project"""
-    if not requirements_manager:
+    if not component.requirements_manager:
         raise HTTPException(status_code=503, detail="Requirements manager not initialized")
     
     # Ensure project exists
-    project = requirements_manager.get_project(project_id)
+    project = component.requirements_manager.get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
     
     # Create requirement
-    requirement_id = requirements_manager.add_requirement(
+    requirement_id = component.requirements_manager.add_requirement(
         project_id=project_id,
         title=request.title,
         description=request.description,
@@ -528,7 +459,7 @@ async def create_requirement(
         raise HTTPException(status_code=500, detail="Failed to create requirement")
     
     # Get the created requirement
-    requirement = requirements_manager.get_requirement(project_id, requirement_id)
+    requirement = component.requirements_manager.get_requirement(project_id, requirement_id)
     
     return {
         "project_id": project_id,
@@ -546,11 +477,11 @@ async def list_requirements(
     tag: Optional[str] = None
 ):
     """List requirements for a project with optional filtering"""
-    if not requirements_manager:
+    if not component.requirements_manager:
         raise HTTPException(status_code=503, detail="Requirements manager not initialized")
     
     # Ensure project exists
-    project = requirements_manager.get_project(project_id)
+    project = component.requirements_manager.get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
     
@@ -573,11 +504,11 @@ async def get_requirement(
     requirement_id: str = Path(..., title="The ID of the requirement")
 ):
     """Get a specific requirement"""
-    if not requirements_manager:
+    if not component.requirements_manager:
         raise HTTPException(status_code=503, detail="Requirements manager not initialized")
     
     # Get the requirement
-    requirement = requirements_manager.get_requirement(project_id, requirement_id)
+    requirement = component.requirements_manager.get_requirement(project_id, requirement_id)
     if not requirement:
         raise HTTPException(
             status_code=404, 
@@ -593,7 +524,7 @@ async def update_requirement(
     request: RequirementUpdateRequest = Body(...)
 ):
     """Update a requirement"""
-    if not requirements_manager:
+    if not component.requirements_manager:
         raise HTTPException(status_code=503, detail="Requirements manager not initialized")
     
     # Prepare updates
@@ -624,7 +555,7 @@ async def update_requirement(
     
     if request.metadata is not None:
         # Get current requirement to merge metadata
-        current_req = requirements_manager.get_requirement(project_id, requirement_id)
+        current_req = component.requirements_manager.get_requirement(project_id, requirement_id)
         if current_req:
             # Merge with existing metadata
             merged_metadata = dict(current_req.metadata)
@@ -638,7 +569,7 @@ async def update_requirement(
         return {"message": "No updates provided", "requirement_id": requirement_id}
     
     # Update the requirement
-    success = requirements_manager.update_requirement(
+    success = component.requirements_manager.update_requirement(
         project_id=project_id,
         requirement_id=requirement_id,
         **updates
@@ -651,7 +582,7 @@ async def update_requirement(
         )
     
     # Get the updated requirement
-    updated_requirement = requirements_manager.get_requirement(project_id, requirement_id)
+    updated_requirement = component.requirements_manager.get_requirement(project_id, requirement_id)
     
     return {
         "requirement_id": requirement_id,
@@ -665,11 +596,11 @@ async def delete_requirement(
     requirement_id: str = Path(..., title="The ID of the requirement")
 ):
     """Delete a requirement"""
-    if not requirements_manager:
+    if not component.requirements_manager:
         raise HTTPException(status_code=503, detail="Requirements manager not initialized")
     
     # Ensure project exists
-    project = requirements_manager.get_project(project_id)
+    project = component.requirements_manager.get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
     
@@ -682,7 +613,7 @@ async def delete_requirement(
         )
     
     # Save the project after deletion
-    requirements_manager._save_project(project)
+    component.requirements_manager._save_project(project)
     
     return {"success": True, "project_id": project_id, "requirement_id": requirement_id}
 
@@ -694,11 +625,11 @@ async def refine_requirement(
     request: RequirementRefinementRequest = Body(...)
 ):
     """Refine a requirement with feedback"""
-    if not requirements_manager:
+    if not component.requirements_manager:
         raise HTTPException(status_code=503, detail="Requirements manager not initialized")
     
     # Get the requirement
-    requirement = requirements_manager.get_requirement(project_id, requirement_id)
+    requirement = component.requirements_manager.get_requirement(project_id, requirement_id)
     if not requirement:
         raise HTTPException(
             status_code=404, 
@@ -711,7 +642,7 @@ async def refine_requirement(
         
         # Refine the requirement
         refined = await refine_requirement_with_feedback(
-            requirements_manager=requirements_manager,
+            requirements_manager=component.requirements_manager,
             project_id=project_id,
             requirement_id=requirement_id,
             feedback=request.feedback,
@@ -730,7 +661,7 @@ async def refine_requirement(
         )
         
         # Update the requirement to save history
-        requirements_manager.update_requirement(
+        component.requirements_manager.update_requirement(
             project_id=project_id,
             requirement_id=requirement_id,
             history=requirement.history
@@ -752,11 +683,11 @@ async def validate_project(
     request: RequirementValidationRequest = Body(...)
 ):
     """Validate a project's requirements against provided criteria"""
-    if not requirements_manager:
+    if not component.requirements_manager:
         raise HTTPException(status_code=503, detail="Requirements manager not initialized")
     
     # Ensure project exists
-    project = requirements_manager.get_project(project_id)
+    project = component.requirements_manager.get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
     
@@ -840,11 +771,11 @@ async def validate_project(
 @routers.v1.get("/projects/{project_id}/traces")
 async def list_traces(project_id: str = Path(..., title="The ID of the project")):
     """List all requirement traces for a project"""
-    if not requirements_manager:
+    if not component.requirements_manager:
         raise HTTPException(status_code=503, detail="Requirements manager not initialized")
     
     # Ensure project exists
-    project = requirements_manager.get_project(project_id)
+    project = component.requirements_manager.get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
     
@@ -859,11 +790,11 @@ async def create_trace(
     request: TraceCreateRequest = Body(...)
 ):
     """Create a new trace between requirements"""
-    if not requirements_manager:
+    if not component.requirements_manager:
         raise HTTPException(status_code=503, detail="Requirements manager not initialized")
     
     # Ensure project exists
-    project = requirements_manager.get_project(project_id)
+    project = component.requirements_manager.get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
     
@@ -897,7 +828,7 @@ async def create_trace(
     project.metadata["traces"].append(trace)
     
     # Save the project
-    requirements_manager._save_project(project)
+    component.requirements_manager._save_project(project)
     
     return {
         "trace_id": trace_id,
@@ -911,11 +842,11 @@ async def get_trace(
     trace_id: str = Path(..., title="The ID of the trace")
 ):
     """Get a specific trace"""
-    if not requirements_manager:
+    if not component.requirements_manager:
         raise HTTPException(status_code=503, detail="Requirements manager not initialized")
     
     # Ensure project exists
-    project = requirements_manager.get_project(project_id)
+    project = component.requirements_manager.get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
     
@@ -935,11 +866,11 @@ async def update_trace(
     request: TraceUpdateRequest = Body(...)
 ):
     """Update a trace"""
-    if not requirements_manager:
+    if not component.requirements_manager:
         raise HTTPException(status_code=503, detail="Requirements manager not initialized")
     
     # Ensure project exists
-    project = requirements_manager.get_project(project_id)
+    project = component.requirements_manager.get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
     
@@ -973,7 +904,7 @@ async def update_trace(
     trace["updated_at"] = datetime.now().timestamp()
     
     # Save the project
-    requirements_manager._save_project(project)
+    component.requirements_manager._save_project(project)
     
     return {
         "trace_id": trace_id,
@@ -987,11 +918,11 @@ async def delete_trace(
     trace_id: str = Path(..., title="The ID of the trace")
 ):
     """Delete a trace"""
-    if not requirements_manager:
+    if not component.requirements_manager:
         raise HTTPException(status_code=503, detail="Requirements manager not initialized")
     
     # Ensure project exists
-    project = requirements_manager.get_project(project_id)
+    project = component.requirements_manager.get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
     
@@ -1008,7 +939,7 @@ async def delete_trace(
     project.metadata["traces"] = updated_traces
     
     # Save the project
-    requirements_manager._save_project(project)
+    component.requirements_manager._save_project(project)
     
     return {"success": True, "trace_id": trace_id}
 
@@ -1019,11 +950,11 @@ async def export_project(
     request: ProjectExportRequest = Body(...)
 ):
     """Export a project in the specified format"""
-    if not requirements_manager:
+    if not component.requirements_manager:
         raise HTTPException(status_code=503, detail="Requirements manager not initialized")
     
     # Ensure project exists
-    project = requirements_manager.get_project(project_id)
+    project = component.requirements_manager.get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
     
@@ -1137,7 +1068,7 @@ async def export_project(
 @routers.v1.post("/projects/import", status_code=201)
 async def import_project(request: ProjectImportRequest = Body(...)):
     """Import a project from external data"""
-    if not requirements_manager:
+    if not component.requirements_manager:
         raise HTTPException(status_code=503, detail="Requirements manager not initialized")
     
     # Handle different import formats
@@ -1146,14 +1077,14 @@ async def import_project(request: ProjectImportRequest = Body(...)):
             data = request.data
             
             # Create a new project
-            project_id = requirements_manager.create_project(
+            project_id = component.requirements_manager.create_project(
                 name=data.get("name", "Imported Project"),
                 description=data.get("description", ""),
                 metadata=data.get("metadata", {})
             )
             
             # Get the project
-            project = requirements_manager.get_project(project_id)
+            project = component.requirements_manager.get_project(project_id)
             if not project:
                 raise HTTPException(status_code=500, detail="Failed to create project")
             
@@ -1166,7 +1097,7 @@ async def import_project(request: ProjectImportRequest = Body(...)):
                 imported_count += 1
             
             # Save the project
-            requirements_manager._save_project(project)
+            component.requirements_manager._save_project(project)
             
             return {
                 "project_id": project_id,
@@ -1186,20 +1117,20 @@ async def import_project(request: ProjectImportRequest = Body(...)):
 @routers.v1.post("/projects/{project_id}/analyze")
 async def analyze_requirements(project_id: str = Path(..., title="The ID of the project")):
     """Analyze requirements for planning readiness"""
-    if not requirements_manager:
+    if not component.requirements_manager:
         raise HTTPException(status_code=503, detail="Requirements manager not initialized")
     
-    if not prometheus_connector:
+    if not component.prometheus_connector:
         raise HTTPException(status_code=503, detail="Prometheus connector not initialized")
     
     # Ensure project exists
-    project = requirements_manager.get_project(project_id)
+    project = component.requirements_manager.get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
     
     try:
         # Analyze requirements
-        analysis = await prometheus_connector.prepare_requirements_for_planning(project_id)
+        analysis = await component.prometheus_connector.prepare_requirements_for_planning(project_id)
         return analysis
     
     except Exception as e:
@@ -1209,20 +1140,20 @@ async def analyze_requirements(project_id: str = Path(..., title="The ID of the 
 @routers.v1.post("/projects/{project_id}/plan")
 async def create_plan(project_id: str = Path(..., title="The ID of the project")):
     """Create a plan for the project using Prometheus"""
-    if not requirements_manager:
+    if not component.requirements_manager:
         raise HTTPException(status_code=503, detail="Requirements manager not initialized")
     
-    if not prometheus_connector:
+    if not component.prometheus_connector:
         raise HTTPException(status_code=503, detail="Prometheus connector not initialized")
     
     # Ensure project exists
-    project = requirements_manager.get_project(project_id)
+    project = component.requirements_manager.get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
     
     try:
         # Create plan
-        plan_result = await prometheus_connector.create_plan(project_id)
+        plan_result = await component.prometheus_connector.create_plan(project_id)
         return plan_result
     
     except Exception as e:
@@ -1235,7 +1166,7 @@ async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for real-time updates"""
     await websocket.accept()
     
-    if not requirements_manager:
+    if not component.requirements_manager:
         await websocket.send_json({
             "type": "ERROR",
             "source": "SERVER",
@@ -1285,7 +1216,7 @@ async def websocket_endpoint(websocket: WebSocket):
             
             elif request.type == "STATUS":
                 # Service status request
-                project_count = len(requirements_manager.projects)
+                project_count = len(component.requirements_manager.projects)
                 
                 await websocket.send_json({
                     "type": "RESPONSE",
@@ -1295,9 +1226,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     "payload": {
                         "status": "ok",
                         "service": "telos",
-                        "version": "0.1.0",
+                        "version": component.version,
                         "project_count": project_count,
-                        "prometheus_available": prometheus_connector.prometheus_available if prometheus_connector else False
+                        "prometheus_available": component.prometheus_connector.prometheus_available if component.prometheus_connector else False
                     }
                 })
             
@@ -1316,7 +1247,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     continue
                 
                 # Check if project exists
-                project = requirements_manager.get_project(project_id)
+                project = component.requirements_manager.get_project(project_id)
                 if not project:
                     await websocket.send_json({
                         "type": "ERROR",
@@ -1367,82 +1298,6 @@ async def websocket_endpoint(websocket: WebSocket):
         except:
             pass
 
-# Add ready endpoint
-routers.root.add_api_route(
-    "/ready",
-    create_ready_endpoint(
-        component_name=COMPONENT_NAME,
-        component_version=COMPONENT_VERSION,
-        start_time=start_time or 0,
-        readiness_check=lambda: requirements_manager is not None
-    ),
-    methods=["GET"]
-)
-
-# Add discovery endpoint to v1 router
-routers.v1.add_api_route(
-    "/discovery",
-    create_discovery_endpoint(
-        component_name=COMPONENT_NAME,
-        component_version=COMPONENT_VERSION,
-        component_description=COMPONENT_DESCRIPTION,
-        endpoints=[
-            EndpointInfo(
-                path="/api/v1/projects",
-                method="GET",
-                description="List all projects"
-            ),
-            EndpointInfo(
-                path="/api/v1/projects",
-                method="POST",
-                description="Create a new project"
-            ),
-            EndpointInfo(
-                path="/api/v1/projects/{project_id}/requirements",
-                method="GET",
-                description="List project requirements"
-            ),
-            EndpointInfo(
-                path="/api/v1/projects/{project_id}/requirements",
-                method="POST",
-                description="Create a new requirement"
-            ),
-            EndpointInfo(
-                path="/api/v1/projects/{project_id}/validate",
-                method="POST",
-                description="Validate project requirements"
-            ),
-            EndpointInfo(
-                path="/api/v1/projects/{project_id}/export",
-                method="POST",
-                description="Export project"
-            ),
-            EndpointInfo(
-                path="/ws",
-                method="WEBSOCKET",
-                description="WebSocket for real-time updates"
-            )
-        ],
-        capabilities=[
-            "requirements_tracking",
-            "requirement_validation",
-            "requirement_tracing",
-            "prometheus_integration",
-            "llm_refinement",
-            "export_import"
-        ],
-        dependencies={
-            "hermes": "http://localhost:8001",
-            "prometheus": "http://localhost:8007"
-        },
-        metadata={
-            "websocket_endpoint": "/ws",
-            "documentation": "/api/v1/docs"
-        }
-    ),
-    methods=["GET"]
-)
-
 # Mount standard routers
 mount_standard_routers(app, routers)
 
@@ -1455,12 +1310,26 @@ except ImportError as e:
     logger.warning(f"FastMCP endpoints not available: {e}")
 
 
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Global exception handler for API"""
+    logger.error(f"Unhandled exception: {str(exc)}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"An unexpected error occurred: {str(exc)}"}
+    )
+
+
 if __name__ == "__main__":
     from shared.utils.socket_server import run_component_server
+    
+    # Get port from GlobalConfig
+    global_config = GlobalConfig.get_instance()
+    port = global_config.config.telos.port
     
     run_component_server(
         component_name="telos",
         app_module="telos.api.app",
-        default_port=int(os.environ.get("TELOS_PORT")),
+        default_port=port,
         reload=False
     )
