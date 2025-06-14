@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 from pydantic import Field
 from tekton.models.base import TektonBaseModel
+from contextlib import asynccontextmanager
 
 # Add Tekton root to path if not already present
 tekton_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
@@ -29,7 +30,7 @@ if tekton_root not in sys.path:
 # Import shared utilities
 from shared.utils.hermes_registration import HermesRegistration, heartbeat_loop
 from shared.utils.logging_setup import setup_component_logging
-from shared.utils.shutdown import component_lifespan
+from shared.utils.shutdown import GracefulShutdown
 from shared.utils.startup import component_startup
 from shared.utils.env_config import get_component_config
 from shared.utils.health_check import create_health_response
@@ -138,136 +139,185 @@ class WebSocketResponse(TektonBaseModel):
     timestamp: float
     payload: Dict[str, Any]
 
-# Define startup and cleanup functions for lifespan
-async def startup_tasks():
-    """Initialize components on startup"""
-    global requirements_manager, prometheus_connector, is_registered_with_hermes, start_time
-    
-    # Track startup time
-    import time
-    start_time = time.time()
-    
-    # Get port from environment
-    port = int(os.environ.get("TELOS_PORT"))
-    
-    hermes_registration = HermesRegistration()
-    is_registered_with_hermes = await hermes_registration.register_component(
-        component_name="telos",
-        port=port,
-        version=COMPONENT_VERSION,
-        capabilities=[
-            "requirements_tracking",
-            "requirement_validation",
-            "requirement_tracing",
-            "prometheus_integration"
-        ],
-        metadata={
-            "description": "Requirements tracking and validation",
-            "category": "planning"
-        }
-    )
-    app.state.hermes_registration = hermes_registration
-    
-    # Start heartbeat task
-    if hermes_registration.is_registered:
-        asyncio.create_task(heartbeat_loop(hermes_registration, "telos"))
-    
-    # Load environment variables for configuration
-    storage_dir = os.environ.get("TELOS_STORAGE_DIR", os.path.join(os.getcwd(), "data", "requirements"))
-    
-    # Ensure storage directory exists
-    os.makedirs(storage_dir, exist_ok=True)
-    
-    # Initialize requirements manager
-    requirements_manager = RequirementsManager(storage_dir=storage_dir)
-    requirements_manager.load_projects()
-    
-    # Initialize Prometheus connector
-    prometheus_connector = TelosPrometheusConnector(requirements_manager)
-    try:
-        await prometheus_connector.initialize()
-    except Exception as e:
-        logger.warning(f"Failed to initialize Prometheus connector: {e}")
-    
-    # Initialize FastMCP integration
-    try:
-        from tekton.mcp.fastmcp.server import FastMCPServer
-        from tekton.mcp.fastmcp.utils.endpoints import add_mcp_endpoints
-        from ..core.mcp.tools import (
-            requirements_management_tools,
-            requirement_tracing_tools,
-            requirement_validation_tools,
-            prometheus_integration_tools
-        )
-        
-        # Create FastMCP server
-        fastmcp_server = FastMCPServer(
-            name="telos",
-            version=__version__, 
-            description="Telos Requirements Management MCP Server"
-        )
-        
-        # Tools are already registered by the @mcp_tool decorator
-        # No need to manually register them
-        
-        # Create MCP router
-        mcp_router = APIRouter(prefix="/api/mcp/v2")
-        add_mcp_endpoints(mcp_router, fastmcp_server)
-        
-        # Add custom health endpoint
-        @mcp_router.get("/health")
-        async def fastmcp_health():
-            """Health check endpoint for FastMCP."""
-            return {
-                "status": "healthy",
-                "service": "telos-fastmcp-integrated",
-                "version": "1.0.0",
-                "tools_registered": len(fastmcp_server._tools),
-                "capabilities_registered": len(fastmcp_server._capabilities),
-                "requirements_manager_available": requirements_manager is not None,
-                "prometheus_connector_available": prometheus_connector is not None
-            }
-        
-        # Include MCP router in main app
-        app.include_router(mcp_router, prefix="/api/mcp/v2")
-        
-        logger.info(f"FastMCP integration initialized successfully")
-        
-    except Exception as e:
-        logger.warning(f"Failed to initialize FastMCP integration: {e}")
-        logger.warning("Telos will continue without FastMCP capabilities")
-    
-    # Initialize Hermes MCP Bridge
-    try:
-        from telos.core.mcp.hermes_bridge import TelosMCPBridge
-        mcp_bridge = TelosMCPBridge(requirements_manager, prometheus_connector)
-        await mcp_bridge.initialize()
-        app.state.mcp_bridge = mcp_bridge
-        logger.info("Hermes MCP Bridge initialized successfully")
-    except Exception as e:
-        logger.error(f"Failed to initialize Hermes MCP Bridge: {e}")
-    
-    logger.info("Telos API initialized with requirements manager and Prometheus connector")
+# Global variables for resources
+hermes_registration = None
+heartbeat_task = None
+mcp_bridge = None
 
-async def cleanup_tasks():
-    """Cleanup on shutdown"""
-    # Shutdown Hermes MCP Bridge
-    if hasattr(app.state, "mcp_bridge") and app.state.mcp_bridge:
-        await app.state.mcp_bridge.shutdown()
-        logger.info("Hermes MCP Bridge shutdown complete")
+# Create lifespan context manager
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan manager for Telos component."""
+    global requirements_manager, prometheus_connector, is_registered_with_hermes, start_time
+    global hermes_registration, heartbeat_task, mcp_bridge
     
-    # Deregister from Hermes
-    if hasattr(app.state, "hermes_registration") and app.state.hermes_registration:
-        await app.state.hermes_registration.deregister("telos")
-    
-    # Clean up Prometheus connector
-    if prometheus_connector:
+    # Define startup function
+    async def telos_startup():
+        """Initialize components on startup"""
+        global requirements_manager, prometheus_connector, is_registered_with_hermes, start_time
+        global hermes_registration, heartbeat_task, mcp_bridge
+        
+        # Track startup time
+        import time
+        start_time = time.time()
+        
+        # Get port from environment
+        port = int(os.environ.get("TELOS_PORT"))
+        
+        hermes_registration = HermesRegistration()
+        is_registered_with_hermes = await hermes_registration.register_component(
+            component_name="telos",
+            port=port,
+            version=COMPONENT_VERSION,
+            capabilities=[
+                "requirements_tracking",
+                "requirement_validation",
+                "requirement_tracing",
+                "prometheus_integration"
+            ],
+            metadata={
+                "description": "Requirements tracking and validation",
+                "category": "planning"
+            }
+        )
+        app.state.hermes_registration = hermes_registration
+        
+        # Start heartbeat task
+        if hermes_registration.is_registered:
+            heartbeat_task = asyncio.create_task(heartbeat_loop(hermes_registration, "telos"))
+        
+        # Load environment variables for configuration
+        storage_dir = os.environ.get("TELOS_STORAGE_DIR", os.path.join(os.getcwd(), "data", "requirements"))
+        
+        # Ensure storage directory exists
+        os.makedirs(storage_dir, exist_ok=True)
+        
+        # Initialize requirements manager
+        requirements_manager = RequirementsManager(storage_dir=storage_dir)
+        requirements_manager.load_projects()
+        
+        # Initialize Prometheus connector
+        prometheus_connector = TelosPrometheusConnector(requirements_manager)
         try:
-            await prometheus_connector.shutdown()
+            await prometheus_connector.initialize()
         except Exception as e:
-            logger.warning(f"Error shutting down Prometheus connector: {e}")
+            logger.warning(f"Failed to initialize Prometheus connector: {e}")
+        
+        # Initialize FastMCP integration
+        try:
+            from tekton.mcp.fastmcp.server import FastMCPServer
+            from tekton.mcp.fastmcp.utils.endpoints import add_mcp_endpoints
+            from ..core.mcp.tools import (
+                requirements_management_tools,
+                requirement_tracing_tools,
+                requirement_validation_tools,
+                prometheus_integration_tools
+            )
+            
+            # Create FastMCP server
+            fastmcp_server = FastMCPServer(
+                name="telos",
+                version=__version__, 
+                description="Telos Requirements Management MCP Server"
+            )
+            
+            # Tools are already registered by the @mcp_tool decorator
+            # No need to manually register them
+            
+            # Create MCP router
+            mcp_router = APIRouter(prefix="/api/mcp/v2")
+            add_mcp_endpoints(mcp_router, fastmcp_server)
+            
+            # Add custom health endpoint
+            @mcp_router.get("/health")
+            async def fastmcp_health():
+                """Health check endpoint for FastMCP."""
+                return {
+                    "status": "healthy",
+                    "service": "telos-fastmcp-integrated",
+                    "version": "1.0.0",
+                    "tools_registered": len(fastmcp_server._tools),
+                    "capabilities_registered": len(fastmcp_server._capabilities),
+                    "requirements_manager_available": requirements_manager is not None,
+                    "prometheus_connector_available": prometheus_connector is not None
+                }
+            
+            # Include MCP router in main app
+            app.include_router(mcp_router, prefix="/api/mcp/v2")
+            
+            logger.info(f"FastMCP integration initialized successfully")
+            
+        except Exception as e:
+            logger.warning(f"Failed to initialize FastMCP integration: {e}")
+            logger.warning("Telos will continue without FastMCP capabilities")
+        
+        # Initialize Hermes MCP Bridge
+        try:
+            from telos.core.mcp.hermes_bridge import TelosMCPBridge
+            mcp_bridge = TelosMCPBridge(requirements_manager, prometheus_connector)
+            await mcp_bridge.initialize()
+            app.state.mcp_bridge = mcp_bridge
+            logger.info("Hermes MCP Bridge initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize Hermes MCP Bridge: {e}")
+        
+        logger.info("Telos API initialized with requirements manager and Prometheus connector")
     
-    logger.info("Telos API shutdown complete")
+    # Execute startup with metrics
+    try:
+        metrics = await component_startup("telos", telos_startup, timeout=30)
+        logger.info(f"Telos started successfully in {metrics.total_time:.2f}s")
+    except Exception as e:
+        logger.error(f"Failed to start Telos: {e}")
+        raise
+    
+    # Create shutdown handler
+    shutdown = GracefulShutdown("telos")
+    
+    # Register cleanup tasks
+    async def cleanup_hermes():
+        """Cleanup Hermes registration."""
+        if heartbeat_task:
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
+        
+        if hermes_registration:
+            await hermes_registration.deregister("telos")
+            logger.info("Deregistered from Hermes")
+    
+    async def cleanup_mcp_bridge():
+        """Cleanup MCP bridge."""
+        if mcp_bridge:
+            try:
+                await mcp_bridge.shutdown()
+                logger.info("Hermes MCP Bridge shutdown complete")
+            except Exception as e:
+                logger.warning(f"Error shutting down MCP bridge: {e}")
+    
+    async def cleanup_prometheus():
+        """Cleanup Prometheus connector."""
+        if prometheus_connector:
+            try:
+                await prometheus_connector.shutdown()
+                logger.info("Prometheus connector shutdown complete")
+            except Exception as e:
+                logger.warning(f"Error shutting down Prometheus connector: {e}")
+    
+    shutdown.register_cleanup(cleanup_hermes)
+    shutdown.register_cleanup(cleanup_mcp_bridge)
+    shutdown.register_cleanup(cleanup_prometheus)
+    
+    yield
+    
+    # Shutdown
+    logger.info("Shutting down Telos API")
+    await shutdown.shutdown_sequence(timeout=10)
+    
+    # Socket release delay for macOS
+    await asyncio.sleep(0.5)
 
 # Initialize FastAPI app with standard configuration
 app = FastAPI(
@@ -276,11 +326,7 @@ app = FastAPI(
         component_version=COMPONENT_VERSION,
         component_description=COMPONENT_DESCRIPTION
     ),
-    lifespan=component_lifespan(
-        "telos",
-        startup_tasks,
-        [cleanup_tasks]
-    )
+    lifespan=lifespan
 )
 
 # Add CORS middleware
